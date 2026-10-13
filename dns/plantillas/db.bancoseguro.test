@@ -1,0 +1,19 @@
+; Zona de bancoseguro.test — escenario 0 (sin protección)
+; TTL de 5 s para que los cambios de escenario se vean al instante.
+; Incrementa el serial en cada cambio.
+$ORIGIN bancoseguro.test.
+$TTL 5
+
+@         IN SOA  ns.bancoseguro.test. hostmaster.bancoseguro.test. (
+                  2026101301 ; serial
+                  5          ; refresh
+                  5          ; retry
+                  60         ; expire
+                  5 )        ; TTL negativo
+
+@         IN NS   ns.bancoseguro.test.
+@         IN MX   10 receptor.bancoseguro.test.
+
+ns        IN A    172.28.0.53
+receptor  IN A    172.28.0.25
+emisor    IN A    172.28.0.10

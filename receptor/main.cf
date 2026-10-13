@@ -1,0 +1,41 @@
+# Postfix del receptor: MX de bancoseguro.test.
+# Acepta correo solo para bancoseguro.test y lo entrega a Mailpit.
+
+compatibility_level = 3.6
+myhostname = receptor.bancoseguro.test
+mydomain = bancoseguro.test
+myorigin = $mydomain
+
+inet_interfaces = all
+inet_protocols = ipv4
+
+# Ningún relay abierto: solo localhost se considera red de confianza.
+mynetworks = 127.0.0.0/8
+
+# No hay buzones locales: bancoseguro.test es un dominio de relay hacia Mailpit.
+mydestination =
+local_recipient_maps =
+relay_domains = bancoseguro.test
+relay_recipient_maps =
+transport_maps = hash:/etc/postfix/transport
+
+smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination
+smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination
+
+# Rechazos claros en la conversación SMTP (5xx definitivos, sin reintentos).
+unknown_relay_recipient_reject_code = 550
+
+# Rspamd como milter: agrega Authentication-Results y, más adelante, aplica DMARC.
+smtpd_milters = inet:127.0.0.1:11332
+non_smtpd_milters = $smtpd_milters
+milter_protocol = 6
+milter_mail_macros = i {mail_addr} {client_addr} {client_name} {auth_authen}
+# Si Rspamd no responde, rechazo temporal: nunca entregar correo sin verificar.
+milter_default_action = tempfail
+
+# Sin TLS ni Internet: red interna de laboratorio.
+smtpd_tls_security_level = none
+smtp_tls_security_level = none
+
+# Logs a la salida estándar del contenedor (docker compose logs receptor).
+maillog_file = /dev/stdout

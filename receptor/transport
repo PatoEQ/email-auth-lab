@@ -1,0 +1,2 @@
+# Todo el correo de bancoseguro.test se entrega a la bandeja web (Mailpit).
+bancoseguro.test    smtp:[mailpit]:1025

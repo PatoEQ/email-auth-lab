@@ -1,0 +1,19 @@
+# CoreDNS: sirve las zonas .test del laboratorio.
+# `reload` revisa los archivos cada 2 s; los cambios de escenario se ven al instante.
+
+bancoseguro.test {
+    file /zonas/db.bancoseguro.test {
+        reload 2s
+    }
+    log
+    errors
+}
+
+# Cualquier otro nombre: NXDOMAIN inmediato. La red no tiene Internet,
+# así que responder rápido evita esperas por timeouts.
+. {
+    template ANY ANY {
+        rcode NXDOMAIN
+    }
+    errors
+}

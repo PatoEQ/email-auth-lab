@@ -1,0 +1,20 @@
+# Volúmenes en tiempo de ejecución (llaves DKIM, estado, zonas renderizadas)
+estado/
+llaves/
+zonas-render/
+
+# Secretos y configuración local
+.env
+
+# Python
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
+# Correos y grabaciones de terminal
+*.eml
+*.cast
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db

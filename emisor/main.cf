@@ -1,0 +1,30 @@
+# Postfix del emisor: servidor de salida legítimo de bancoseguro.test.
+# Entrega buscando el MX de bancoseguro.test en el DNS del laboratorio (→ receptor).
+
+compatibility_level = 3.6
+myhostname = emisor.bancoseguro.test
+mydomain = bancoseguro.test
+myorigin = $mydomain
+
+inet_interfaces = all
+inet_protocols = ipv4
+
+# Solo la toolbox (`lab enviar legit`) puede enviar a través del emisor.
+# El atacante (172.28.0.66) no: si pudiera, su correo saldría "legítimo".
+mynetworks = 127.0.0.0/8 172.28.0.100/32
+
+# No hay buzones locales: todo sale hacia el MX del destinatario.
+mydestination = localhost
+local_recipient_maps =
+smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination
+
+# Sin TLS ni Internet: red interna de laboratorio.
+smtpd_tls_security_level = none
+smtp_tls_security_level = none
+
+# Reintentos rápidos: en el laboratorio no queremos correos esperando minutos.
+queue_run_delay = 10s
+minimal_backoff_time = 10s
+maximal_backoff_time = 30s
+
+maillog_file = /dev/stdout

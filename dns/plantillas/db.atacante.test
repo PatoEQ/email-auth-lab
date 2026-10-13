@@ -1,0 +1,18 @@
+; Zona de atacante.test — infraestructura del atacante, igual en todos los escenarios.
+; Tiene SPF y DKIM válidos para SU dominio, pero no publica DMARC.
+$ORIGIN atacante.test.
+$TTL 5
+
+@         IN SOA  ns.atacante.test. hostmaster.atacante.test. (
+                  {{SERIAL}} ; serial
+                  5          ; refresh
+                  5          ; retry
+                  60         ; expire
+                  5 )        ; TTL negativo
+
+@         IN NS   ns.atacante.test.
+ns        IN A    172.28.0.53
+mail      IN A    172.28.0.66
+
+@         IN TXT  "v=spf1 ip4:172.28.0.66 -all"
+a2026._domainkey IN TXT {{DKIM_A2026}}

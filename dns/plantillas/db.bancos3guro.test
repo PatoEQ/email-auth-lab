@@ -1,0 +1,19 @@
+; Zona de bancos3guro.test — dominio parecido del atacante (una "e" cambiada por un "3").
+; Igual en todos los escenarios: SPF, DKIM y DMARC p=reject impecables.
+$ORIGIN bancos3guro.test.
+$TTL 5
+
+@         IN SOA  ns.bancos3guro.test. hostmaster.bancos3guro.test. (
+                  {{SERIAL}} ; serial
+                  5          ; refresh
+                  5          ; retry
+                  60         ; expire
+                  5 )        ; TTL negativo
+
+@         IN NS   ns.bancos3guro.test.
+ns        IN A    172.28.0.53
+mail      IN A    172.28.0.66
+
+@         IN TXT  "v=spf1 ip4:172.28.0.66 -all"
+p2026._domainkey IN TXT {{DKIM_P2026}}
+_dmarc    IN TXT  "v=DMARC1; p=reject"

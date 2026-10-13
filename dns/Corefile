@@ -1,8 +1,25 @@
 # CoreDNS: sirve las zonas .test del laboratorio.
-# `reload` revisa los archivos cada 2 s; los cambios de escenario se ven al instante.
+# `init` y `lab escenario` escriben las zonas activas en el volumen zonas-render.
+# `reload` revisa los archivos cada 2 s y recarga cuando cambia el serial del SOA.
 
 bancoseguro.test {
-    file /zonas/db.bancoseguro.test {
+    file /zonas/activas/db.bancoseguro.test {
+        reload 2s
+    }
+    log
+    errors
+}
+
+atacante.test {
+    file /zonas/activas/db.atacante.test {
+        reload 2s
+    }
+    log
+    errors
+}
+
+bancos3guro.test {
+    file /zonas/activas/db.bancos3guro.test {
         reload 2s
     }
     log

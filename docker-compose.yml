@@ -1,24 +1,56 @@
-# email-auth-lab — Fase 1: esqueleto (dns, receptor, mailpit)
+# email-auth-lab — Fase 2: escenario 0 (init, dns, emisor, receptor, mailpit, atacante, toolbox)
 # Todas las imágenes llevan versión fija para que el laboratorio sea reproducible.
 
 name: email-auth-lab
 
 services:
+  # Genera las llaves DKIM que falten y renderiza las zonas DNS. Corre y termina.
+  init:
+    build: ./init
+    image: email-auth-lab/init:fase2
+    network_mode: none
+    volumes:
+      - ./dns/plantillas:/plantillas:ro
+      - llaves:/llaves
+      - zonas-render:/zonas
+      - estado:/estado
+    restart: "no"
+
   dns:
     image: coredns/coredns:1.12.4
     command: ["-conf", "/etc/coredns/Corefile"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
     volumes:
       - ./dns/Corefile:/etc/coredns/Corefile:ro
-      # Fase 1: la zona se sirve tal cual. Desde la fase 2, `init` la renderiza en zonas-render/.
-      - ./dns/plantillas:/zonas:ro
+      - zonas-render:/zonas:ro
     networks:
       lab-net:
         ipv4_address: 172.28.0.53
     restart: unless-stopped
 
+  emisor:
+    build: ./emisor
+    image: email-auth-lab/emisor:fase2
+    hostname: emisor.bancoseguro.test
+    init: true
+    dns: 172.28.0.53
+    depends_on:
+      - dns
+    networks:
+      lab-net:
+        ipv4_address: 172.28.0.10
+    healthcheck:
+      test: ["CMD", "postfix", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
   receptor:
     build: ./receptor
-    image: email-auth-lab/receptor:fase1
+    image: email-auth-lab/receptor:fase2
     hostname: receptor.bancoseguro.test
     init: true
     dns: 172.28.0.53
@@ -50,19 +82,49 @@ services:
       ui-net: {}
     restart: unless-stopped
 
-  # Herramientas para tests (en la fase 2 se convierte en la CLI `lab`).
-  # Perfil propio: no arranca con `up`; se usa con `docker compose run --rm --build toolbox ...`.
+  # Lanza los ataques. Su API (puerto 8080) solo es accesible dentro de lab-net.
+  atacante:
+    build: ./atacante
+    image: email-auth-lab/atacante:fase2
+    hostname: mail.atacante.test
+    init: true
+    dns: 172.28.0.53
+    depends_on:
+      - dns
+    networks:
+      lab-net:
+        ipv4_address: 172.28.0.66
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  # CLI `lab` y tests. `scale: 0`: `up --build` la construye pero no la arranca;
+  # se usa con `./lab.sh <comando>` o `docker compose run --rm toolbox ...`.
   toolbox:
-    build: ./toolbox
-    image: email-auth-lab/toolbox:fase1
-    profiles: ["herramientas"]
+    build:
+      context: ./toolbox
+      additional_contexts:
+        init: ./init
+    image: email-auth-lab/toolbox:fase2
+    scale: 0
     dns: 172.28.0.53
     working_dir: /lab
     volumes:
       - ./tests:/lab/tests:ro
+      - ./pyproject.toml:/lab/pyproject.toml:ro
+      - zonas-render:/zonas
+      - estado:/estado
     networks:
       lab-net:
         ipv4_address: 172.28.0.100
+
+volumes:
+  llaves:        # llaves DKIM (privadas): nunca en el repositorio
+  zonas-render:  # zonas DNS renderizadas por escenario y la zona activa
+  estado:        # escenario activo (estado.json), compartido sin docker.sock
 
 networks:
   lab-net:

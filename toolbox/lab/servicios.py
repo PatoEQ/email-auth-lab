@@ -7,7 +7,7 @@ import smtplib
 from collections.abc import Callable
 from urllib.request import urlopen
 
-from lab import dns, mailpit
+from lab import dns, escenarios, mailpit
 from lab.config import ATACANTE_API, EMISOR, RECEPTOR, VICTIM_DOMAIN
 
 
@@ -17,6 +17,15 @@ def _smtp_banner(host: str) -> str:
     if code != 250:
         raise RuntimeError(f"respondió {code}")
     return "acepta conexiones SMTP"
+
+
+def _emisor() -> str:
+    detail = _smtp_banner(EMISOR)
+    applied = escenarios.emisor_state()
+    if applied:
+        firma = "activada" if applied.get("firma_dkim") else "desactivada"
+        detail += f"; firma DKIM {firma}"
+    return detail
 
 
 def _dns() -> str:
@@ -39,7 +48,7 @@ def _atacante() -> str:
 
 CHECKS: dict[str, tuple[str, Callable[[], str]]] = {
     "dns": ("Servidor DNS (CoreDNS)", _dns),
-    "emisor": ("Servidor de salida del banco", lambda: _smtp_banner(EMISOR)),
+    "emisor": ("Servidor de salida del banco", lambda: _emisor()),
     "receptor": ("MX del banco (Postfix + Rspamd)", lambda: _smtp_banner(RECEPTOR)),
     "mailpit": ("Bandeja web", _mailpit),
     "atacante": ("Atacante", _atacante),

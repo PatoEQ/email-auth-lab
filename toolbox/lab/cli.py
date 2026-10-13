@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from typing import Any
 
@@ -17,9 +18,9 @@ from lab.envios import LabError, launch_attack, list_attacks, send_legit
 console = Console(highlight=False)
 
 
-def _auth_results(message_id: str) -> tuple[bool, str]:
+def _auth_results(message_id: str, receptor_queue_id: str | None) -> tuple[bool, str]:
     """¿Llegó a Mailpit? y su Authentication-Results (si llegó)."""
-    message = mailpit.wait_for_message_id(message_id, timeout=15)
+    message = mailpit.wait_for_message_id(message_id, receptor_queue_id, timeout=15)
     if not message:
         return False, ""
     values = mailpit.headers(message["ID"]).get("Authentication-Results", [])
@@ -41,9 +42,7 @@ def _domain(address: str) -> str:
     return address.rpartition("@")[2].strip('<>" ').lower()
 
 
-def _interpret(auth: str, envelope_from: str, header_from: str) -> str:
-    """Qué significa el resultado de SPF para la persona que lee el correo."""
-    envelope, visible = _domain(envelope_from), _domain(header_from)
+def _interpret_spf(auth: str, envelope: str, visible: str) -> str:
     if "spf=pass" in auth and envelope != visible:
         return (
             f"SPF pasó, pero para [bold]{envelope}[/] (el sobre), no para [bold]{visible}[/], "
@@ -61,19 +60,44 @@ def _interpret(auth: str, envelope_from: str, header_from: str) -> str:
     return ""
 
 
+def _interpret_dkim(auth: str, visible: str) -> str:
+    match = re.search(r"dkim=(\w+)(?:[^;]*?header\.d=([\w.-]+))?", auth)
+    if not match or match.group(1) == "none":
+        return "Sin firma DKIM."
+    result, signer = match.group(1), (match.group(2) or "?").lower()
+    if result == "pass" and signer != visible:
+        return (
+            f"DKIM válido, pero firmado por [bold]{signer}[/], no por [bold]{visible}[/]. "
+            "Prueba quién firmó, no que el remitente visible sea auténtico."
+        )
+    if result == "pass":
+        return f"DKIM válido: {signer} firmó este correo y nadie lo modificó después."
+    if result == "fail":
+        return (
+            f"DKIM falló: la firma de {signer} no coincide con el contenido. "
+            "[bold]El correo fue modificado[/] después de firmarse."
+        )
+    return f"DKIM no se pudo verificar ({result}) para {signer}."
+
+
 def _show_delivery(
-    message_id: str, smtp_accepted: bool, envelope_from: str, header_from: str
+    message_id: str,
+    smtp_accepted: bool,
+    envelope_from: str,
+    header_from: str,
+    receptor_queue_id: str | None = None,
 ) -> None:
     if not smtp_accepted:
         return
-    delivered, auth = _auth_results(message_id)
-    if delivered:
-        console.print(f"  [green]Llegó a la bandeja del empleado[/] (Mailpit).  {_verdicts(auth)}")
-        meaning = _interpret(auth, envelope_from, header_from)
+    delivered, auth = _auth_results(message_id, receptor_queue_id)
+    if not delivered:
+        console.print("  [yellow]Todavía no aparece en Mailpit.[/] Revisa en unos segundos.")
+        return
+    console.print(f"  [green]Llegó a la bandeja del empleado[/] (Mailpit).  {_verdicts(auth)}")
+    envelope, visible = _domain(envelope_from), _domain(header_from)
+    for meaning in (_interpret_spf(auth, envelope, visible), _interpret_dkim(auth, visible)):
         if meaning:
             console.print(f"  [bold]Qué significa:[/] {meaning}")
-    else:
-        console.print("  [yellow]Todavía no aparece en Mailpit.[/] Revisa en unos segundos.")
 
 
 # --- comandos ---------------------------------------------------------------
@@ -100,7 +124,7 @@ def cmd_escenario(args: argparse.Namespace) -> int:
         for line in result.removed:
             console.print(f"  [red]- {line}[/]")
         for line in result.added:
-            console.print(f"  [green]+ {line}[/]")
+            console.print(f"  [green]+ {line if len(line) < 90 else line[:87] + '…'}[/]")
     else:
         console.print("La zona DNS de bancoseguro.test no cambió respecto al escenario anterior.")
 
@@ -113,7 +137,13 @@ def cmd_escenario(args: argparse.Namespace) -> int:
         console.print("[yellow]⚠ El DNS todavía no sirve el serial nuevo. Revisa `lab estado`.[/]")
     console.print(f"Serial SOA publicado: {state['serial']}")
     firma = "[green]activada[/]" if state["firma_dkim"] else "[yellow]desactivada[/]"
-    console.print(f"Firma DKIM del emisor: {firma}")
+    if result.emisor_confirmed:
+        console.print(f"Firma DKIM del emisor: {firma} (confirmado por el emisor)")
+    else:
+        console.print(
+            f"Firma DKIM del emisor: {firma}, [red]pero el emisor no lo confirmó[/]. "
+            "Prueba `docker compose restart emisor`."
+        )
     _print_records()
     console.print(f"\n[bold]Qué significa:[/] {escenarios.MEANING.get(state['escenario'], '')}")
     return 0
@@ -182,6 +212,8 @@ def cmd_atacar(args: argparse.Namespace) -> int:
             console.print(f"  Sobre (MAIL FROM): {result['envelope_from']}")
             console.print(f"  Remitente visible (From:): {result['header_from']}")
             console.print(f"  Firma DKIM: {attack['dkim']}")
+            if result.get("note"):
+                console.print(f"  [dim]{result['note']}[/]")
             console.print(f"  Respuesta SMTP: {result['code']} {result['reply']}")
             console.print(f"  {_explain_smtp(result)}")
             _show_delivery(
@@ -189,6 +221,7 @@ def cmd_atacar(args: argparse.Namespace) -> int:
                 result["accepted"],
                 result["envelope_from"],
                 result["header_from"],
+                mailpit.queue_id(result["reply"]),
             )
     except LabError as error:
         console.print(f"[red]✗ {error}[/]")

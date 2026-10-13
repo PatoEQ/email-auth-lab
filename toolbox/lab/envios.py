@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.policy import SMTP
+from email.utils import formatdate
 from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -47,6 +48,7 @@ def send_legit() -> SendResult:
     msg["From"] = f"Director General <{DIRECTOR}>"
     msg["To"] = EMPLOYEE
     msg["Subject"] = LEGIT_SUBJECT
+    msg["Date"] = formatdate(localtime=True)  # como cualquier cliente de correo
     message_id = f"{uuid.uuid4()}@bancoseguro.test"
     msg["Message-ID"] = f"<{message_id}>"
     msg.set_content(LEGIT_BODY)

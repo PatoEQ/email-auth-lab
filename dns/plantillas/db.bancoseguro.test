@@ -1,5 +1,6 @@
 ; Zona de bancoseguro.test — la víctima.
-; {{SERIAL}} lo pone `lab escenario` al activar; {{REGISTROS_ESCENARIO}}, `init` según el escenario.
+; El serial lo pone `lab escenario` al activar; los registros de autenticación,
+; `init` según el escenario (ver init/renderizar_zonas.py).
 ; TTL de 5 s para que los cambios de escenario se vean al instante.
 $ORIGIN bancoseguro.test.
 $TTL 5

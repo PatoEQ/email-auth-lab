@@ -14,7 +14,7 @@ from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from ataques import CATALOG
-from ataques.comun import ALLOWED_SERVER, DEFAULT_RECIPIENT, DestinationError
+from ataques.comun import ALLOWED_SERVER, DEFAULT_RECIPIENT, AttackError, DestinationError
 
 PORT = 8080
 
@@ -58,6 +58,9 @@ class Handler(BaseHTTPRequestHandler):
             result = launch(recipient, server)
         except DestinationError as error:
             self._json(400, {"error": str(error)})
+            return
+        except AttackError as error:
+            self._json(409, {"error": str(error)})
             return
         self._json(200, result.to_dict())
 

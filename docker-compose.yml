@@ -1,4 +1,4 @@
-# email-auth-lab — Fase 2: escenario 0 (init, dns, emisor, receptor, mailpit, atacante, toolbox)
+# email-auth-lab — hasta la fase 4: escenarios 0, 1 y 2 (SPF y DKIM)
 # Todas las imágenes llevan versión fija para que el laboratorio sea reproducible.
 
 name: email-auth-lab
@@ -7,7 +7,7 @@ services:
   # Genera las llaves DKIM que falten y renderiza las zonas DNS. Corre y termina.
   init:
     build: ./init
-    image: email-auth-lab/init:fase2
+    image: email-auth-lab/init:lab
     network_mode: none
     volumes:
       - ./dns/plantillas:/plantillas:ro
@@ -32,17 +32,30 @@ services:
 
   emisor:
     build: ./emisor
-    image: email-auth-lab/emisor:fase2
+    image: email-auth-lab/emisor:lab
     hostname: emisor.bancoseguro.test
     init: true
     dns: 172.28.0.53
     depends_on:
-      - dns
+      init:
+        condition: service_completed_successfully
+      dns:
+        condition: service_started
+    volumes:
+      # Solo la llave del banco (s2026), de solo lectura.
+      - type: volume
+        source: llaves
+        target: /llaves
+        read_only: true
+        volume:
+          subpath: bancoseguro.test
+      # Lee el escenario activo y confirma en emisor.json que ya lo aplicó.
+      - estado:/estado
     networks:
       lab-net:
         ipv4_address: 172.28.0.10
     healthcheck:
-      test: ["CMD", "postfix", "status"]
+      test: ["CMD-SHELL", "postfix status && test -f /estado/emisor.json"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -50,7 +63,7 @@ services:
 
   receptor:
     build: ./receptor
-    image: email-auth-lab/receptor:fase2
+    image: email-auth-lab/receptor:lab
     hostname: receptor.bancoseguro.test
     init: true
     dns: 172.28.0.53
@@ -85,12 +98,29 @@ services:
   # Lanza los ataques. Su API (puerto 8080) solo es accesible dentro de lab-net.
   atacante:
     build: ./atacante
-    image: email-auth-lab/atacante:fase2
+    image: email-auth-lab/atacante:lab
     hostname: mail.atacante.test
     init: true
     dns: 172.28.0.53
     depends_on:
-      - dns
+      init:
+        condition: service_completed_successfully
+      dns:
+        condition: service_started
+    volumes:
+      # Solo las llaves del atacante. La del banco nunca se monta aquí.
+      - type: volume
+        source: llaves
+        target: /llaves/atacante.test
+        read_only: true
+        volume:
+          subpath: atacante.test
+      - type: volume
+        source: llaves
+        target: /llaves/bancos3guro.test
+        read_only: true
+        volume:
+          subpath: bancos3guro.test
     networks:
       lab-net:
         ipv4_address: 172.28.0.66
@@ -108,7 +138,7 @@ services:
       context: ./toolbox
       additional_contexts:
         init: ./init
-    image: email-auth-lab/toolbox:fase2
+    image: email-auth-lab/toolbox:lab
     scale: 0
     dns: 172.28.0.53
     working_dir: /lab

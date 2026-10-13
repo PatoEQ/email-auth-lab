@@ -7,6 +7,7 @@ import subprocess
 
 import pytest
 from conftest import build_message, mailpit_get, wait_for_message
+from lab import escenarios
 
 
 def dig(name: str, rtype: str) -> list[str]:
@@ -30,6 +31,7 @@ def test_dns_no_resuelve_dominios_reales() -> None:
 
 
 def test_correo_simple_llega_a_mailpit(smtp: smtplib.SMTP, unique_subject: str) -> None:
+    escenarios.activate("0")
     msg = build_message("prueba@bancoseguro.test", "empleado@bancoseguro.test", unique_subject)
     smtp.send_message(msg)
 

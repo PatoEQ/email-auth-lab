@@ -49,6 +49,15 @@ ESCENARIOS: dict[str, Escenario] = {
         ('@         IN TXT  "v=spf1 ip4:172.28.0.10 -all"',),
         firma_dkim=False,
     ),
+    "2": Escenario(
+        "2",
+        "SPF + DKIM",
+        (
+            '@         IN TXT  "v=spf1 ip4:172.28.0.10 -all"',
+            "s2026._domainkey IN TXT {{DKIM_S2026}}",
+        ),
+        firma_dkim=True,
+    ),
 }
 
 ESCENARIO_INICIAL = "0"
@@ -80,13 +89,20 @@ def renderizar_todo(plantillas: Path, llaves: Path, zonas: Path) -> None:
         for dominio, selector in LLAVES_DKIM
     }
     for escenario in ESCENARIOS.values():
-        marcadores_escenario = marcadores | {
+        # Primero los registros del escenario: pueden contener marcadores {{DKIM_...}}.
+        marcadores_escenario = {
             "{{REGISTROS_ESCENARIO}}": "\n".join(escenario.registros) or "; (ninguno)"
-        }
+        } | marcadores
         destino = zonas / "escenarios" / escenario.id
         destino.mkdir(parents=True, exist_ok=True)
         for dominio in DOMINIOS:
             zona = (plantillas / f"db.{dominio}").read_text(encoding="utf-8")
+            for linea in zona.splitlines():
+                if linea.lstrip().startswith(";") and "{{" in linea:
+                    raise ValueError(
+                        f"db.{dominio}: un comentario contiene un marcador {{{{…}}}}; "
+                        "se reemplazaría y podría crear registros por accidente"
+                    )
             for marcador, valor in marcadores_escenario.items():
                 zona = zona.replace(marcador, valor)
             pendientes = set(re.findall(r"\{\{[A-Z0-9_]+\}\}", zona)) - {MARCADOR_SERIAL}

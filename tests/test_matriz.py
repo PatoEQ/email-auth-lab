@@ -54,8 +54,13 @@ TRUTH_TABLE: dict[str, tuple[str, ...]] = {
 # fmt: on
 
 # Celdas ya construidas (envío, escenario), agrupadas por escenario para cambiar poco.
-# Fase 2: columna 0 (legítimo, A1). Fase 3: columnas 0 y 1 (legítimo, A1, A2).
-IMPLEMENTED = [(sender, scenario) for scenario in ("0", "1") for sender in ("legit", "A1", "A2")]
+# Fase 2: columna 0 (legítimo, A1). Fase 3: + columna 1 y A2. Fase 4: + columna 2, A3 y A4.
+# El legítimo va primero en cada columna: A3 altera el último correo legítimo.
+IMPLEMENTED = [
+    (sender, scenario)
+    for scenario in ("0", "1", "2")
+    for sender in ("legit", "A1", "A2", "A3", "A4")
+]
 
 
 def expected(sender: str, scenario: str) -> Expected:
@@ -76,18 +81,19 @@ def test_tabla_de_verdad(sender: str, scenario: str) -> None:
 
     if sender == "legit":
         result = send_legit()
-        code, message_id = result.code, result.message_id
+        code, message_id, queue = result.code, result.message_id, None
     else:
         attack = launch_attack(sender)
         code, message_id = attack["code"], attack["message_id"]
+        queue = mailpit.queue_id(attack["reply"])  # A3 reutiliza el Message-ID original
 
     if want.outcome == "R":
+        # Un 5xx en la conversación SMTP significa que el receptor no lo aceptó.
         assert 500 <= code < 600, f"{sender}/{scenario}: se esperaba rechazo 5xx, llegó {code}"
-        assert mailpit.find_by_message_id(message_id) is None
         return
 
     assert 200 <= code < 300, f"{sender}/{scenario}: SMTP {code}, se esperaba aceptación"
-    message = mailpit.wait_for_message_id(message_id)
+    message = mailpit.wait_for_message_id(message_id, queue)
     assert message, f"{sender}/{scenario}: no llegó a Mailpit"
 
     auth = mailpit.headers(message["ID"]).get("Authentication-Results", [""])[0]

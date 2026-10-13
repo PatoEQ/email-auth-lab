@@ -15,7 +15,7 @@ from ataques.comun import (
     Attack,
     AttackResult,
     DestinationError,
-    send_with_swaks,
+    send_simple,
 )
 
 ATTACK = Attack(
@@ -28,7 +28,7 @@ ATTACK = Attack(
 
 
 def launch(recipient: str = DEFAULT_RECIPIENT, server: str = ALLOWED_SERVER) -> AttackResult:
-    return send_with_swaks(ATTACK, recipient, server)
+    return send_simple(ATTACK, recipient, server)
 
 
 def main() -> int:

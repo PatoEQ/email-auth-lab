@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -27,6 +28,12 @@ MEANING: dict[str, str] = {
         "(MAIL FROM), no el From: que ve el empleado: un atacante que pone su propio "
         "dominio en el sobre pasa SPF sin problema."
     ),
+    "2": (
+        "Además del SPF, el emisor firma cada correo con DKIM (selector s2026) y el banco "
+        "publica la llave pública. El receptor puede comprobar quién firmó y que nadie "
+        "modificó el correo por el camino. Pero DKIM tampoco compara el dominio que firma "
+        "(d=) con el From: que ve el empleado."
+    ),
 }
 
 # Registros de autenticación que mostramos al activar o consultar el estado.
@@ -45,16 +52,28 @@ class Activation:
     removed: list[str]
     propagated: bool
     waited_ttl: bool  # ¿esperamos a que caduquen las cachés DNS?
+    emisor_confirmed: bool  # ¿el emisor ya aplicó la firma DKIM del escenario?
 
 
 def current_state() -> dict[str, Any]:
     return zonas.leer_estado(ESTADO_DIR)
 
 
+def _strip_comment(line: str) -> str:
+    """Quita el comentario («; …») que no esté dentro de comillas (los TXT llevan «;»)."""
+    in_quotes = False
+    for i, char in enumerate(line):
+        if char == '"':
+            in_quotes = not in_quotes
+        elif char == ";" and not in_quotes:
+            return line[:i]
+    return line
+
+
 def _records(zone_text: str) -> set[str]:
     """Registros de la zona sin comentarios ni el bloque SOA (que cambia en cada activación)."""
     text = re.sub(r"IN SOA[^)]*\)", "", zone_text)
-    lines = (re.sub(r";.*", "", line) for line in text.splitlines())
+    lines = (_strip_comment(line) for line in text.splitlines())
     return {" ".join(line.split()) for line in lines if line.strip() and not line.startswith("$")}
 
 
@@ -78,6 +97,8 @@ def activate(escenario_id: str, timeout: float = 15.0) -> Activation:
             break
         time.sleep(0.5)
 
+    emisor_confirmed = _wait_emisor(state, deadline)
+
     # El receptor puede tener en caché los registros anteriores hasta que venza su TTL.
     # Si la zona cambió, esperamos ese TTL para que el próximo correo vea los nuevos.
     changed = before != after
@@ -91,7 +112,27 @@ def activate(escenario_id: str, timeout: float = 15.0) -> Activation:
         removed=sorted(before - after),
         propagated=propagated,
         waited_ttl=changed and propagated,
+        emisor_confirmed=emisor_confirmed,
     )
+
+
+def emisor_state() -> dict[str, Any]:
+    """Lo que el emisor confirmó haber aplicado (escribe estado/emisor.json)."""
+    try:
+        return json.loads((ESTADO_DIR / "emisor.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _wait_emisor(state: dict[str, Any], deadline: float) -> bool:
+    """Espera a que el emisor aplique el escenario (revisa estado/ cada segundo)."""
+    while True:
+        applied = emisor_state()
+        if applied.get("serial") == state["serial"]:
+            return applied.get("firma_dkim") == state["firma_dkim"]
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.3)
 
 
 def published_records() -> list[tuple[str, str, list[str]]]:

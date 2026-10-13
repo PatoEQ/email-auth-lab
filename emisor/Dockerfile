@@ -1,16 +1,20 @@
 # Emisor: servidor de salida legítimo de bancoseguro.test (172.28.0.10).
-# Fase 2: solo Postfix. En la fase 4 se agrega OpenDKIM para firmar.
+# Postfix + OpenDKIM (selector s2026). Firma solo si el escenario activo lo pide.
 FROM debian:trixie-20250929-slim
 
 RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postfix \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+       postfix opendkim jq \
     && rm -rf /var/lib/apt/lists/*
 
 COPY main.cf /etc/postfix/main.cf
+COPY opendkim.conf /etc/opendkim.conf
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Sin chroot: Postfix usa el /etc/resolv.conf del contenedor tal cual.
-RUN postconf -F '*/*/chroot = n' \
+RUN chmod 755 /usr/local/bin/entrypoint.sh \
+    && postconf -F '*/*/chroot = n' \
     && postfix check
 
 EXPOSE 25
-CMD ["postfix", "start-fg"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

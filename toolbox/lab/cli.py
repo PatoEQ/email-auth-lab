@@ -12,7 +12,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from lab import escenarios, explicador, mailpit, reportes, servicios
+from lab import dns, escenarios, explicador, mailpit, reportes, servicios, verificar
 from lab.config import VICTIM_DOMAIN, ZONE_TTL
 from lab.envios import LabError, forward, launch_attack, list_attacks, send_legit
 
@@ -306,6 +306,50 @@ def cmd_reenviar(args: argparse.Namespace) -> int:
         result["envelope_from"],
         result["header_from"],
         mailpit.queue_id(result["reply"]),
+    )
+    return 0
+
+
+def cmd_verificar(args: argparse.Namespace) -> int:
+    state = escenarios.current_state()
+    console.print(
+        f"[bold]Registros publicados ahora[/] (escenario {state.get('escenario', '?')}), "
+        "consultados con dig al DNS del laboratorio:\n"
+    )
+    targets = [
+        ("SPF", VICTIM_DOMAIN, verificar.spf),
+        ("DKIM", f"s2026._domainkey.{VICTIM_DOMAIN}", verificar.dkim),
+        ("DMARC", f"_dmarc.{VICTIM_DOMAIN}", verificar.dmarc),
+    ]
+    # Dominio que no envía correo: solo si publica algo (escenario 5).
+    if dns.dig("noenvia.test", "TXT") or dns.dig("_dmarc.noenvia.test", "TXT"):
+        targets += [
+            ("SPF", "noenvia.test", verificar.spf),
+            ("DMARC", "_dmarc.noenvia.test", verificar.dmarc),
+        ]
+
+    published = {}
+    for kind, name, validate in targets:
+        records = dns.dig(name, "TXT")
+        if kind == "SPF":
+            records = [r for r in records if r.lower().startswith("v=spf1")]
+        published[(kind, name)] = bool(records)
+        console.print(f"[bold]{kind}[/]  [cyan]dig TXT {name}[/]")
+        for record in records:
+            shown = record if len(record) < 100 else record[:97] + "…"
+            console.print(f"   {escape(shown)}")
+        for check in validate(records):
+            mark = "[green]✓[/]" if check.ok else ("[yellow]⚠[/]" if check.warning else "[red]✗[/]")
+            console.print(f"   {mark} {check.message}")
+        console.print()
+
+    missing = [k for (k, n), ok in published.items() if not ok and n.endswith(VICTIM_DOMAIN)]
+    if not missing:
+        meaning = f"{VICTIM_DOMAIN} publica SPF, DKIM y DMARC."
+    else:
+        meaning = f"A {VICTIM_DOMAIN} le falta: {', '.join(missing)}."
+    console.print(
+        f"[bold]Qué significa:[/] {meaning} {escenarios.MEANING.get(state.get('escenario'), '')}"
     )
     return 0
 
@@ -614,6 +658,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--todos", action="store_true", help="lanza todos los ataques disponibles")
     p.add_argument("--para", help=argparse.SUPPRESS)  # solo para demostrar la validación
     p.set_defaults(func=cmd_atacar)
+
+    p = sub.add_parser("verificar", help="dig TXT de los registros activos, con validación")
+    p.set_defaults(func=cmd_verificar)
 
     p = sub.add_parser("explicar", help="explica SPF, DKIM y DMARC del último correo recibido")
     p.add_argument("que", choices=["ultimo"], metavar="ultimo", help="ultimo")

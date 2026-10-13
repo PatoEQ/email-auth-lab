@@ -80,6 +80,8 @@ Infraestructura del atacante, presente en todos los escenarios:
 
 Todos van a `empleado@bancoseguro.test`, salen desde 172.28.0.66 y usan el mismo texto de "transferencia urgente". A3 toma el último correo legítimo firmado de Mailpit, cambia el número de cuenta en el cuerpo y lo reenvía tal cual.
 
+**Extra del escenario 5 (fuera de la tabla de verdad y de `--todos`):** N1 · Dominio que no envía correo: `facturas@noenvia.test` en el sobre y en el `From:`, sin firma. Se entrega mientras `noenvia.test` no publica nada; con el escenario 5 (`v=spf1 -all` y `p=reject`) se rechaza.
+
 ## 6. Tabla de verdad (contrato de los tests)
 
 `tests/test_matriz.py` debe verificar exactamente esto. Abreviaturas:
@@ -114,6 +116,7 @@ Puntos de entrada en el host: `./lab.sh <comando>` (Linux, macOS, WSL) y `.\lab.
 | `lab reportes` | Muestra un reporte DMARC agregado de `reportes/ejemplos/` como tabla |
 | `lab estado` | Escenario activo y salud de los servicios |
 | `lab reset` | Vacía Mailpit y vuelve al escenario 0 |
+| `lab reenviar [--lista]` | Escenario 5 (perfil `extras`): reenvía el último correo legítimo desde `reenviador`, tal cual o como una lista de correo que lo modifica |
 
 ## 8. Estructura del repositorio
 

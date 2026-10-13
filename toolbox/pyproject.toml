@@ -9,7 +9,7 @@ dependencies = ["rich"]
 lab = "lab.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools==80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

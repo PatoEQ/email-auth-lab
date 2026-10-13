@@ -89,7 +89,8 @@ services:
     # Docker no publica puertos de contenedores que solo están en una red `internal`.
     # Por eso Mailpit también está en `ui-net` (bridge normal). Nadie más usa esa red.
     ports:
-      - "127.0.0.1:8025:8025"
+      # Siempre en 127.0.0.1. El puerto del host se puede cambiar en .env (MAILPIT_PUERTO).
+      - "127.0.0.1:${MAILPIT_PUERTO:-8025}:8025"
     networks:
       lab-net:
         ipv4_address: 172.28.0.30

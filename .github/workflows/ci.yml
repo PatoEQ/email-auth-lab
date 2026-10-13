@@ -1,0 +1,85 @@
+# CI de email-auth-lab: calidad del código y la prueba completa del laboratorio.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  calidad:
+    name: Lint, formato y secretos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks revisa todo el historial
+
+      - name: ruff (lint)
+        run: docker run --rm -v "$PWD":/io -w /io ghcr.io/astral-sh/ruff:0.14.0 check .
+
+      - name: ruff (formato)
+        run: docker run --rm -v "$PWD":/io -w /io ghcr.io/astral-sh/ruff:0.14.0 format --check .
+
+      - name: shellcheck
+        run: |
+          docker run --rm -v "$PWD":/mnt koalaman/shellcheck:v0.11.0 \
+            lab.sh init/entrypoint.sh receptor/entrypoint.sh emisor/entrypoint.sh atacante/entrypoint.sh
+
+      - name: lab.ps1 (sintaxis de PowerShell)
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/lab.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors; exit 1 }
+
+      - name: Finales de línea LF (regla 7)
+        run: |
+          if git ls-files --eol | grep -E "i/(crlf|mixed)"; then
+            echo "Hay archivos con CRLF en el repositorio."; exit 1
+          fi
+
+      - name: Secretos en el historial (gitleaks)
+        run: docker run --rm -v "$PWD":/repo zricethezav/gitleaks:v8.28.0 git /repo --redact
+
+      - name: Puertos solo en 127.0.0.1 (regla 6)
+        run: |
+          docker compose --profile extras config --format json \
+            | jq -e '[.services[].ports // [] | .[] | .host_ip] | all(. == "127.0.0.1")'
+
+  laboratorio:
+    name: Laboratorio completo (tabla de verdad)
+    needs: calidad
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Construir y levantar (con el perfil extras)
+        run: docker compose --profile extras up -d --build --wait
+
+      - name: lab estado
+        run: ./lab.sh estado
+
+      - name: Tests (pytest)
+        run: docker compose run --rm toolbox pytest -q -rs
+
+      - name: git status limpio (sin llaves, .env ni volúmenes)
+        run: test -z "$(git status --porcelain)"
+
+      - name: Logs si algo falló
+        if: failure()
+        run: docker compose --profile extras logs --no-color --tail 200
+
+      - name: Bajar el laboratorio
+        if: always()
+        run: docker compose --profile extras down -v

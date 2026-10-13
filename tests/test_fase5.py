@@ -113,10 +113,11 @@ def test_cli_atacar_todos_en_reject() -> None:
     proc = lab("atacar", "--todos")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     text = flat(proc.stdout)
-    for attack_id in ("A1", "A2", "A3", "A4"):
+    for attack_id in ("A1", "A2", "A3", "A4", "A5", "A6"):
         assert f"{attack_id} ·" in text
+    # A1–A4 rechazados; A5 y A6 (fase 6) pasan incluso con p=reject: son los límites.
     assert text.count("RECHAZADO") == 4
-    assert "Llegó a la bandeja" not in text
+    assert text.count("Llegó a la bandeja") == 2
 
 
 def test_cli_explica_quarantine() -> None:

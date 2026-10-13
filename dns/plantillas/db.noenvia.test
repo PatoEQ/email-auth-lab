@@ -1,0 +1,18 @@
+; Zona de noenvia.test — un dominio de la organización que NO envía correo
+; (por ejemplo, uno de marca o uno antiguo). Existe en todos los escenarios; solo en
+; el escenario 5 publica la protección recomendada: SPF "-all" y DMARC p=reject.
+$ORIGIN noenvia.test.
+$TTL 5
+
+@         IN SOA  ns.noenvia.test. hostmaster.noenvia.test. (
+                  {{SERIAL}} ; serial
+                  5          ; refresh
+                  5          ; retry
+                  60         ; expire
+                  5 )        ; TTL negativo
+
+@         IN NS   ns.noenvia.test.
+ns        IN A    172.28.0.53
+
+; --- Registros de protección del escenario activo ---
+{{REGISTROS_ESCENARIO}}

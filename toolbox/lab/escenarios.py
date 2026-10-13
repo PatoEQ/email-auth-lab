@@ -49,6 +49,18 @@ MEANING: dict[str, str] = {
         "Política p=reject: lo que falla DMARC se rechaza en la conversación SMTP (5xx) "
         "y nunca llega a la bandeja. A1–A4 quedan bloqueados; el correo legítimo pasa."
     ),
+    "4": (
+        "La misma protección que 3-reject: bancoseguro.test está blindado. Pero SPF, DKIM "
+        "y DMARC solo protegen el dominio exacto. Un dominio parecido (bancos3guro.test, "
+        "con su propio DMARC impecable) o un nombre visible engañoso («Director General» "
+        "con una dirección cualquiera) pasan todas las verificaciones."
+    ),
+    "5": (
+        "Igual que 3-reject, más dos lecciones de producción. 1) Un dominio que no envía "
+        "correo (noenvia.test) también debe protegerse: «v=spf1 -all» y DMARC p=reject. "
+        "2) El reenvío rompe SPF (cambia la IP), pero DKIM sobrevive si nadie toca el "
+        "correo; una lista de correo que modifica asunto o cuerpo rompe ambos."
+    ),
 }
 
 # Registros de autenticación que mostramos al activar o consultar el estado.
@@ -57,6 +69,8 @@ AUTH_RECORDS = (
     ("DKIM", f"{DKIM_SELECTOR}._domainkey.{VICTIM_DOMAIN}"),
     ("DMARC", f"_dmarc.{VICTIM_DOMAIN}"),
 )
+# Dominio que no envía correo (escenario 5): se muestra solo si publica algo.
+PARKED_RECORDS = (("SPF", "noenvia.test"), ("DMARC", "_dmarc.noenvia.test"))
 
 
 @dataclass
@@ -92,17 +106,25 @@ def _records(zone_text: str) -> set[str]:
     return {" ".join(line.split()) for line in lines if line.strip() and not line.startswith("$")}
 
 
-def _active_zone() -> str:
-    path = ZONAS_DIR / "activas" / f"db.{VICTIM_DOMAIN}"
-    return path.read_text(encoding="utf-8") if path.exists() else ""
+def _active_records() -> set[str]:
+    """Registros activos de todas las zonas. Los de otros dominios llevan el dominio
+    delante, para que el resumen de cambios diga a quién pertenecen."""
+    records: set[str] = set()
+    for domain in zonas.DOMINIOS:
+        path = ZONAS_DIR / "activas" / f"db.{domain}"
+        if not path.exists():
+            continue
+        prefix = "" if domain == VICTIM_DOMAIN else f"({domain}) "
+        records |= {prefix + r for r in _records(path.read_text(encoding="utf-8"))}
+    return records
 
 
 def activate(escenario_id: str, timeout: float = 15.0) -> Activation:
     """Publica el escenario y espera a que CoreDNS sirva el serial nuevo."""
     previous = current_state().get("escenario")
-    before = _records(_active_zone())
+    before = _active_records()
     state = zonas.activar(escenario_id, ZONAS_DIR, ESTADO_DIR)
-    after = _records(_active_zone())
+    after = _active_records()
 
     deadline = time.monotonic() + timeout
     propagated = False
@@ -158,4 +180,8 @@ def published_records() -> list[tuple[str, str, list[str]]]:
         if kind == "SPF":
             answers = [a for a in answers if a.startswith("v=spf1")]
         result.append((kind, name, answers))
+    for kind, name in PARKED_RECORDS:
+        answers = dns.dig(name, "TXT")
+        if answers:
+            result.append((kind, name, answers))
     return result

@@ -22,6 +22,12 @@ def info() -> dict[str, Any]:
     return _request("/info")
 
 
+def latest() -> dict[str, Any] | None:
+    """El correo más reciente de la bandeja."""
+    messages = _request("/messages?limit=1")["messages"]
+    return messages[0] if messages else None
+
+
 def delete_all() -> None:
     _request("/messages", method="DELETE")
 

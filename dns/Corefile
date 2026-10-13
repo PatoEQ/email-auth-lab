@@ -26,6 +26,14 @@ bancos3guro.test {
     errors
 }
 
+noenvia.test {
+    file /zonas/activas/db.noenvia.test {
+        reload 2s
+    }
+    log
+    errors
+}
+
 # Cualquier otro nombre: NXDOMAIN inmediato. La red no tiene Internet,
 # así que responder rápido evita esperas por timeouts.
 . {
@@ -33,4 +41,6 @@ bancos3guro.test {
         rcode NXDOMAIN
     }
     errors
+    # Si cambia este Corefile (por ejemplo, una zona nueva), CoreDNS lo recarga solo.
+    reload 5s
 }

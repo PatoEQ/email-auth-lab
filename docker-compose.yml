@@ -1,4 +1,4 @@
-# email-auth-lab — hasta la fase 4: escenarios 0, 1 y 2 (SPF y DKIM)
+# email-auth-lab — escenarios 0 a 5 (SPF, DKIM, DMARC, límites y extras)
 # Todas las imágenes llevan versión fija para que el laboratorio sea reproducible.
 
 name: email-auth-lab
@@ -23,7 +23,8 @@ services:
       init:
         condition: service_completed_successfully
     volumes:
-      - ./dns/Corefile:/etc/coredns/Corefile:ro
+      # La carpeta, no el archivo: así CoreDNS ve los cambios del Corefile (plugin reload).
+      - ./dns:/etc/coredns:ro
       - zonas-render:/zonas:ro
     networks:
       lab-net:
@@ -124,6 +125,30 @@ services:
     networks:
       lab-net:
         ipv4_address: 172.28.0.66
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  # Solo escenario 5: reenvío automático y lista de correo. Perfil `extras`:
+  #   docker compose --profile extras up -d --build
+  reenviador:
+    build:
+      context: ./reenviador
+      additional_contexts:
+        ataques: ./atacante/ataques
+    image: email-auth-lab/reenviador:lab
+    profiles: ["extras"]
+    hostname: reenvio.asociacion-bancaria.test
+    init: true
+    dns: 172.28.0.53
+    depends_on:
+      - dns
+    networks:
+      lab-net:
+        ipv4_address: 172.28.0.40
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/salud', timeout=3)"]
       interval: 10s

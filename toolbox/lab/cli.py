@@ -12,9 +12,9 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from lab import escenarios, mailpit, reportes, servicios
-from lab.config import ZONE_TTL
-from lab.envios import LabError, launch_attack, list_attacks, send_legit
+from lab import escenarios, explicador, mailpit, reportes, servicios
+from lab.config import VICTIM_DOMAIN, ZONE_TTL
+from lab.envios import LabError, forward, launch_attack, list_attacks, send_legit
 
 console = Console(highlight=False)
 
@@ -56,6 +56,8 @@ def _interpret_spf(auth: str, envelope: str, visible: str) -> str:
     if "spf=pass" in auth:
         return f"SPF pasó: la IP de origen está autorizada por {envelope}."
     if "spf=fail" in auth:
+        if re.search(r"dmarc=(pass|fail)", auth):  # hay política DMARC: ella decide
+            return f"SPF falló: {envelope} no autoriza esa IP. DMARC decide qué hacer con eso."
         return (
             f"SPF falló: {envelope} no autoriza esa IP. Pero nadie le dijo al receptor qué "
             "hacer con un fallo (eso es DMARC), así que lo entregó igual."
@@ -134,6 +136,17 @@ def _show_delivery(
     for meaning in meanings:
         if meaning:
             console.print(f"  [bold]Qué significa:[/] {meaning}")
+    display_name = explicador.parseaddr(header_from)[0]
+    if explicador.lookalike_of(visible):
+        console.print(
+            f"  [bold red]⚠ Ojo:[/] {visible} imita a {explicador.lookalike_of(visible)}. "
+            "Todo pasa porque el correo es auténtico… del dominio equivocado."
+        )
+    elif display_name and visible != VICTIM_DOMAIN:
+        console.print(
+            f"  [bold red]⚠ Ojo:[/] el nombre visible «{display_name}» no se verifica: "
+            f"la dirección real es de {visible}."
+        )
 
 
 # --- comandos ---------------------------------------------------------------
@@ -156,13 +169,13 @@ def cmd_escenario(args: argparse.Namespace) -> int:
     if result.previous == state["escenario"]:
         console.print("Ya estaba activo; se volvió a publicar la zona (serial nuevo).")
     elif result.added or result.removed:
-        console.print(f"Cambios en la zona DNS respecto al escenario {result.previous}:")
+        console.print(f"Cambios en el DNS respecto al escenario {result.previous}:")
         for line in result.removed:
             console.print(f"  [red]- {line}[/]")
         for line in result.added:
             console.print(f"  [green]+ {line if len(line) < 90 else line[:87] + '…'}[/]")
     else:
-        console.print("La zona DNS de bancoseguro.test no cambió respecto al escenario anterior.")
+        console.print("Las zonas DNS no cambiaron respecto al escenario anterior.")
 
     if result.waited_ttl:
         console.print(
@@ -230,9 +243,9 @@ def cmd_atacar(args: argparse.Namespace) -> int:
     try:
         catalog = {a["id"]: a for a in list_attacks()}
         if args.todos:
-            ids = list(catalog)
-        elif args.id:
-            ids = [args.id.upper()]
+            ids = [i for i, attack in catalog.items() if not attack.get("extra")]
+        elif args.ids:
+            ids = [i.upper() for i in args.ids]
         else:
             console.print("[red]✗ Indica un ataque (por ejemplo, A1) o usa --todos.[/]")
             return 2
@@ -268,6 +281,35 @@ def cmd_atacar(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reenviar(args: argparse.Namespace) -> int:
+    mode = "lista" if args.lista else "tal-cual"
+    try:
+        result = forward(mode)
+    except LabError as error:
+        console.print(f"[red]✗ {error}[/]")
+        return 2
+    title = "lista de correo" if mode == "lista" else "reenvío automático"
+    console.print(f"\n[bold]Reenvío · {title}[/] desde 172.28.0.40")
+    if mode == "lista":
+        console.print("  La lista agregó «[Asociacion Bancaria]» al asunto y un pie al final.")
+    else:
+        console.print("  Reenvío automático: el correo viaja sin cambios, pero desde otra IP.")
+    if result.get("note"):
+        console.print(f"  [dim]{result['note']}[/]")
+    console.print(f"  Sobre (MAIL FROM): {result['envelope_from']}")
+    console.print(f"  Remitente visible (From:): {result['header_from']}")
+    console.print(f"  Respuesta SMTP: {result['code']} {result['reply']}")
+    console.print(f"  {_explain_smtp(result)}")
+    _show_delivery(
+        result["message_id"],
+        result["accepted"],
+        result["envelope_from"],
+        result["header_from"],
+        mailpit.queue_id(result["reply"]),
+    )
+    return 0
+
+
 def cmd_estado(args: argparse.Namespace) -> int:
     state = escenarios.current_state()
     if state:
@@ -287,6 +329,13 @@ def cmd_estado(args: argparse.Namespace) -> int:
     for name, role, ok, detail in servicios.check_all():
         all_ok &= ok
         table.add_row(name, role, "[green]✓ ok[/]" if ok else "[red]✗ falla[/]", detail)
+    extra = servicios.reenviador()
+    table.add_row(
+        "reenviador",
+        "Reenvío / lista (opcional)",
+        "[green]✓ ok[/]" if extra else "[dim]– apagado[/]",
+        extra or "perfil extras: docker compose --profile extras up -d",
+    )
     console.print(table)
 
     if all_ok:
@@ -379,6 +428,173 @@ def _colored(result: str) -> str:
     return f"[green]{result}[/]" if result == "pass" else f"[red]{result}[/]"
 
 
+# --- explicar ---------------------------------------------------------------------
+
+STYLE = {"pass": "bold green", "fail": "bold red", "none": "bold yellow"}
+
+
+def _badge(result: str) -> str:
+    return f"[{STYLE.get(result, 'bold magenta')}]{result.upper()}[/]"
+
+
+def _check(ok: bool) -> str:
+    return "[green]✓ coincide[/]" if ok else "[red]✗ no coincide[/]"
+
+
+def _explain_spf(a: explicador.Analysis) -> list[str]:
+    spf, envelope = a.spf, a.envelope_domain or "?"
+    lines = [
+        f"Revisa si la IP {a.source_ip} puede enviar correo de [bold]{envelope}[/], "
+        "el dominio del sobre (Return-Path)."
+    ]
+    if spf.result == "pass":
+        lines.append(f"Sí: {envelope} publica un SPF que autoriza esa IP.")
+    elif spf.result in ("fail", "softfail"):
+        lines.append(
+            f"No: el SPF de {envelope} no incluye esa IP. Alguien usa ese dominio sin permiso."
+        )
+    elif spf.result == "none":
+        lines.append(f"{envelope} no publica SPF: no hay nada contra qué comparar.")
+    else:
+        lines.append(f"No se pudo evaluar ({spf.result}).")
+    lines.append(
+        f"Alineación con el From: ({a.from_domain}): {_check(a.spf_aligned)}"
+        + ("" if a.spf_aligned or spf.result != "pass" else " — SPF pasó, pero para otro dominio.")
+    )
+    return lines
+
+
+def _explain_dkim(a: explicador.Analysis) -> list[str]:
+    lines = []
+    for sig in a.dkim:
+        signer, selector = sig.props.get("header.d", ""), sig.props.get("header.s", "")
+        if sig.result == "none":
+            lines.append("El correo no trae firma DKIM: no hay forma de saber si fue modificado.")
+            continue
+        where = f"{selector}._domainkey.{signer}" if selector else signer
+        lines.append(f"Firma de [bold]{signer}[/] (selector {selector}); llave buscada en {where}.")
+        if sig.result == "pass":
+            lines.append("La firma es válida: ese dominio firmó y nadie tocó el contenido firmado.")
+        elif sig.result == "fail":
+            why = f" ({sig.comment})" if sig.comment else ""
+            lines.append(
+                f"[red]La firma no coincide{why}:[/] el correo cambió después de firmarse."
+            )
+        else:
+            lines.append(f"No se pudo verificar ({sig.result}).")
+        lines.append(f"Alineación con el From: ({a.from_domain}): {_check(a.dkim_aligned(sig))}")
+    return lines
+
+
+def _explain_dmarc(a: explicador.Analysis) -> list[str]:
+    dmarc = a.dmarc
+    policy = dmarc.props.get("policy", "")
+    if dmarc.result == "none":
+        return [
+            f"[bold]{a.from_domain}[/] no publica DMARC: el receptor no tiene política que aplicar "
+            "y tampoco exige que SPF o DKIM coincidan con el From:."
+        ]
+    lines = [
+        f"Exige que SPF o DKIM pasen [bold]para {a.from_domain}[/] "
+        "(el dominio que ves en el From:)."
+    ]
+    if dmarc.result == "pass":
+        lines.append("Se cumple: el dominio del remitente visible respalda este correo.")
+    else:
+        reason = dmarc.props.get("reason")
+        lines.append("No se cumple" + (f" ({reason})." if reason else "."))
+    consequence = {
+        "none": "p=none: el dueño del dominio solo pide observar; el correo se entrega igual.",
+        "quarantine": "p=quarantine: si falla, se entrega marcado como sospechoso.",
+        "reject": "p=reject: si falla, se rechaza (no llegaría a la bandeja).",
+    }
+    if policy in consequence:
+        lines.append(f"Política publicada {consequence[policy]}")
+    return lines
+
+
+def _conclusion(a: explicador.Analysis) -> list[str]:
+    lines = []
+    if a.lookalike_of:
+        lines.append(
+            f"[bold red]⚠ Dominio parecido:[/] [bold]{a.from_domain}[/] imita a "
+            f"[bold]{a.lookalike_of}[/]. SPF, DKIM y DMARC pueden pasar porque el correo es "
+            f"auténtico… de {a.from_domain}. Ninguno compara dominios «parecidos»."
+        )
+    if a.misleading_display_name:
+        lines.append(
+            f"[bold red]⚠ Nombre visible:[/] dice «{a.display_name}», pero la dirección real es "
+            f"[bold]{a.from_address}[/]. Muchos clientes (sobre todo en el móvil) muestran solo "
+            "el nombre, y nadie verifica el nombre."
+        )
+    if a.quarantined:
+        lines.append("[yellow]Llegó marcado como sospechoso por la política DMARC (cuarentena).[/]")
+    if a.dmarc.result == "pass" and not lines:
+        lines.append(
+            f"[green]El remitente visible es auténtico: {a.from_domain} respalda este correo.[/]"
+        )
+    elif a.dmarc.result == "pass":
+        lines.append(
+            f"DMARC pasó, pero solo garantiza que el correo viene de {a.from_domain}. "
+            "Decide tú si ese dominio es quien dice ser."
+        )
+    elif a.dmarc.result == "fail":
+        lines.append(
+            f"[red]No hay prueba de que este correo venga de {a.from_domain}.[/] "
+            "Desconfía, sobre todo si pide dinero o datos."
+        )
+    else:
+        lines.append(
+            f"[yellow]{a.from_domain} no publica DMARC: nada garantiza que el remitente visible "
+            "sea auténtico.[/]"
+        )
+    return lines
+
+
+def cmd_explicar(args: argparse.Namespace) -> int:
+    latest = mailpit.latest()
+    if latest is None:
+        console.print(
+            "[yellow]La bandeja está vacía.[/] Envía algo con `lab enviar legit` o `lab atacar A1`."
+        )
+        return 1
+    analysis = explicador.analyze(mailpit.headers(latest["ID"]), latest["Subject"], QUARANTINE_TAG)
+    a = analysis
+    shown_from = f"{a.display_name} <{a.from_address}>" if a.display_name else a.from_address
+    console.print(
+        Panel.fit(
+            f"[bold]Asunto:[/] {escape(a.subject)}\n"
+            f"[bold]De (lo que ve el empleado):[/] {escape(shown_from)}\n"
+            f"[bold]Sobre (Return-Path):[/] {a.envelope_from or '?'}\n"
+            f"[bold]Enviado desde:[/] {a.source_ip} — {a.source_label}",
+            title="Último correo en la bandeja",
+            border_style="cyan",
+        )
+    )
+    sections = (
+        ("SPF", "¿la IP puede enviar por ese dominio?", a.spf.result, _explain_spf(a)),
+        (
+            "DKIM",
+            "¿quién firmó y llegó intacto?",
+            a.dkim[0].result,
+            _explain_dkim(a),
+        ),
+        ("DMARC", "¿respalda el dominio del From:?", a.dmarc.result, _explain_dmarc(a)),
+    )
+    for name, question, result, lines in sections:
+        console.print(f"\n{_badge(result)}  [bold]{name}[/] [dim]— {question}[/]")
+        for line in lines:
+            console.print(f"   {line}")
+
+    console.print("\n[bold]Conclusión[/]")
+    for line in _conclusion(a):
+        console.print(f"   {line}")
+    console.print(
+        "\n[dim]Los correos rechazados (5xx) no llegan a la bandeja, así que no aparecen aquí.[/]"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lab", description="Laboratorio de SPF, DKIM y DMARC (dominios .test, red aislada)."
@@ -394,14 +610,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_enviar)
 
     p = sub.add_parser("atacar", help="lanza ataques desde el contenedor atacante")
-    p.add_argument("id", nargs="?", help="ataque: A1…A6")
+    p.add_argument("ids", nargs="*", metavar="id", help="uno o varios ataques: A1…A6")
     p.add_argument("--todos", action="store_true", help="lanza todos los ataques disponibles")
     p.add_argument("--para", help=argparse.SUPPRESS)  # solo para demostrar la validación
     p.set_defaults(func=cmd_atacar)
 
+    p = sub.add_parser("explicar", help="explica SPF, DKIM y DMARC del último correo recibido")
+    p.add_argument("que", choices=["ultimo"], metavar="ultimo", help="ultimo")
+    p.set_defaults(func=cmd_explicar)
+
     p = sub.add_parser("reportes", help="muestra los reportes DMARC agregados de ejemplo")
     p.add_argument("archivo", nargs="?", help="parte del nombre del archivo (opcional)")
     p.set_defaults(func=cmd_reportes)
+
+    p = sub.add_parser("reenviar", help="escenario 5: reenvía el último correo legítimo")
+    p.add_argument("--lista", action="store_true", help="como una lista de correo (lo modifica)")
+    p.set_defaults(func=cmd_reenviar)
 
     p = sub.add_parser("estado", help="escenario activo y salud de los servicios")
     p.set_defaults(func=cmd_estado)

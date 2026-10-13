@@ -8,7 +8,7 @@ from collections.abc import Callable
 from urllib.request import urlopen
 
 from lab import dns, escenarios, mailpit
-from lab.config import ATACANTE_API, EMISOR, RECEPTOR, VICTIM_DOMAIN
+from lab.config import ATACANTE_API, EMISOR, RECEPTOR, REENVIADOR_API, VICTIM_DOMAIN
 
 
 def _smtp_banner(host: str) -> str:
@@ -55,8 +55,18 @@ CHECKS: dict[str, tuple[str, Callable[[], str]]] = {
 }
 
 
+def reenviador() -> str | None:
+    """Estado del reenviador (opcional, perfil `extras`): None si no está levantado."""
+    try:
+        with urlopen(f"{REENVIADOR_API}/salud", timeout=3) as resp:
+            json.load(resp)
+    except OSError:
+        return None
+    return "listo para reenviar (escenario 5)"
+
+
 def check_all() -> list[tuple[str, str, bool, str]]:
-    """(servicio, función, ok, detalle) para cada servicio."""
+    """(servicio, función, ok, detalle) para cada servicio obligatorio."""
     results = []
     for name, (role, check) in CHECKS.items():
         try:

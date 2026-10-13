@@ -18,11 +18,11 @@ import os
 import re
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-DOMINIOS = ("bancoseguro.test", "atacante.test", "bancos3guro.test")
+DOMINIOS = ("bancoseguro.test", "atacante.test", "bancos3guro.test", "noenvia.test")
 
 # Llaves DKIM: (dominio, selector). Las genera `init` con opendkim-genkey.
 LLAVES_DKIM = (
@@ -38,6 +38,13 @@ class Escenario:
     nombre: str
     registros: tuple[str, ...]  # líneas extra en la zona de bancoseguro.test
     firma_dkim: bool  # ¿el emisor firma con DKIM?
+    # Registros extra de otros dominios con {{REGISTROS_ESCENARIO}} en su plantilla.
+    otros: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def registros_de(self, dominio: str) -> tuple[str, ...]:
+        if dominio == "bancoseguro.test":
+            return self.registros
+        return self.otros.get(dominio, ())
 
 
 SPF_BANCO = '@         IN TXT  "v=spf1 ip4:172.28.0.10 -all"'
@@ -73,6 +80,25 @@ ESCENARIOS: dict[str, Escenario] = {
         )
         for politica in ("none", "quarantine", "reject")
     },
+    # Mismos registros que 3-reject: lo que cambia son los ataques (A5 y A6).
+    "4": Escenario(
+        "4",
+        "Límites: dominio parecido y nombre visible",
+        (SPF_BANCO, DKIM_BANCO, dmarc_banco("reject")),
+        firma_dkim=True,
+    ),  # 3-reject + protección de un dominio que no envía correo (y el reenviador, perfil extras).
+    "5": Escenario(
+        "5",
+        "Extras: reenvío y dominio que no envía",
+        (SPF_BANCO, DKIM_BANCO, dmarc_banco("reject")),
+        firma_dkim=True,
+        otros={
+            "noenvia.test": (
+                '@         IN TXT  "v=spf1 -all"',
+                '_dmarc    IN TXT  "v=DMARC1; p=reject"',
+            )
+        },
+    ),
 }
 
 ESCENARIO_INICIAL = "0"
@@ -104,13 +130,14 @@ def renderizar_todo(plantillas: Path, llaves: Path, zonas: Path) -> None:
         for dominio, selector in LLAVES_DKIM
     }
     for escenario in ESCENARIOS.values():
-        # Primero los registros del escenario: pueden contener marcadores {{DKIM_...}}.
-        marcadores_escenario = {
-            "{{REGISTROS_ESCENARIO}}": "\n".join(escenario.registros) or "; (ninguno)"
-        } | marcadores
         destino = zonas / "escenarios" / escenario.id
         destino.mkdir(parents=True, exist_ok=True)
         for dominio in DOMINIOS:
+            # Primero los registros del escenario: pueden contener marcadores {{DKIM_...}}.
+            marcadores_escenario = {
+                "{{REGISTROS_ESCENARIO}}": "\n".join(escenario.registros_de(dominio))
+                or "; (ninguno)"
+            } | marcadores
             zona = (plantillas / f"db.{dominio}").read_text(encoding="utf-8")
             for linea in zona.splitlines():
                 if linea.lstrip().startswith(";") and "{{" in linea:

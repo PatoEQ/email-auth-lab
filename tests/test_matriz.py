@@ -53,14 +53,17 @@ TRUTH_TABLE: dict[str, tuple[str, ...]] = {
 }
 # fmt: on
 
+# Los escenarios 4 y 5 repiten la columna 3-reject (CLAUDE.md, sección 6).
+SAME_AS = {"4": "3-reject", "5": "3-reject"}
+
 # Celdas ya construidas (envío, escenario), agrupadas por escenario para cambiar poco.
 # Fase 2: columna 0 (legítimo, A1). Fase 3: + columna 1 y A2. Fase 4: + columna 2, A3 y A4.
-# Fase 5: + columnas 3-none, 3-quarantine y 3-reject.
+# Fase 5: + columnas 3-*. Fase 6: + A5, A6 y los escenarios 4 y 5.
 # El legítimo va primero en cada columna: A3 altera el último correo legítimo.
 IMPLEMENTED = [
     (sender, scenario)
-    for scenario in ("0", "1", "2", "3-none", "3-quarantine", "3-reject")
-    for sender in ("legit", "A1", "A2", "A3", "A4")
+    for scenario in ("0", "1", "2", "3-none", "3-quarantine", "3-reject", "4", "5")
+    for sender in TRUTH_TABLE
 ]
 
 # Marca visible de cuarentena (receptor/rspamd/actions.conf).
@@ -68,7 +71,8 @@ QUARANTINE_TAG = "[CUARENTENA]"
 
 
 def expected(sender: str, scenario: str) -> Expected:
-    return cell(TRUTH_TABLE[sender][COLUMNS.index(scenario)])
+    column = SAME_AS.get(scenario, scenario)
+    return cell(TRUTH_TABLE[sender][COLUMNS.index(column)])
 
 
 @pytest.fixture(scope="module", autouse=True)

@@ -9,6 +9,7 @@ RECEPTOR = "receptor"
 EMISOR = "emisor"
 MAILPIT_API = "http://mailpit:8025/api/v1"
 ATACANTE_API = "http://atacante:8080"
+REENVIADOR_API = "http://reenviador:8080"  # solo con el perfil `extras`
 
 VICTIM_DOMAIN = "bancoseguro.test"
 ZONE_TTL = 5  # segundos; igual al $TTL de las plantillas en dns/plantillas/

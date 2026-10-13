@@ -63,8 +63,9 @@ A1 · Suplantación directa
   Remitente visible (From:): director@bancoseguro.test
   Firma DKIM: ninguna
   Respuesta SMTP: 250 2.0.0 Ok: queued as 59F9035438
-  ACEPTADO: el receptor no encontró motivo para desconfiar.
+  ACEPTADO: el receptor recibió el correo para entregarlo.
   Llegó a la bandeja del empleado (Mailpit).  spf=none  dkim=none  dmarc=none
+  Qué significa: bancoseguro.test no publica SPF: no hay nada que verificar.
 ```
 
 Verificación automática:

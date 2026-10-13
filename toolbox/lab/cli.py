@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from lab import escenarios, mailpit, servicios
+from lab.config import ZONE_TTL
 from lab.envios import LabError, launch_attack, list_attacks, send_legit
 
 console = Console(highlight=False)
@@ -36,12 +37,41 @@ def _verdicts(auth_results: str) -> str:
     return "  ".join(parts) or auth_results
 
 
-def _show_delivery(message_id: str, smtp_accepted: bool) -> None:
+def _domain(address: str) -> str:
+    return address.rpartition("@")[2].strip('<>" ').lower()
+
+
+def _interpret(auth: str, envelope_from: str, header_from: str) -> str:
+    """Qué significa el resultado de SPF para la persona que lee el correo."""
+    envelope, visible = _domain(envelope_from), _domain(header_from)
+    if "spf=pass" in auth and envelope != visible:
+        return (
+            f"SPF pasó, pero para [bold]{envelope}[/] (el sobre), no para [bold]{visible}[/], "
+            "que es lo que ve el empleado. SPF no compara esos dos dominios."
+        )
+    if "spf=pass" in auth:
+        return f"SPF pasó: la IP de origen está autorizada por {envelope}."
+    if "spf=fail" in auth:
+        return (
+            f"SPF falló: {envelope} no autoriza esa IP. Pero nadie le dijo al receptor qué "
+            "hacer con un fallo (eso es DMARC), así que lo entregó igual."
+        )
+    if "spf=none" in auth:
+        return f"{envelope} no publica SPF: no hay nada que verificar."
+    return ""
+
+
+def _show_delivery(
+    message_id: str, smtp_accepted: bool, envelope_from: str, header_from: str
+) -> None:
     if not smtp_accepted:
         return
     delivered, auth = _auth_results(message_id)
     if delivered:
         console.print(f"  [green]Llegó a la bandeja del empleado[/] (Mailpit).  {_verdicts(auth)}")
+        meaning = _interpret(auth, envelope_from, header_from)
+        if meaning:
+            console.print(f"  [bold]Qué significa:[/] {meaning}")
     else:
         console.print("  [yellow]Todavía no aparece en Mailpit.[/] Revisa en unos segundos.")
 
@@ -74,6 +104,11 @@ def cmd_escenario(args: argparse.Namespace) -> int:
     else:
         console.print("La zona DNS de bancoseguro.test no cambió respecto al escenario anterior.")
 
+    if result.waited_ttl:
+        console.print(
+            f"[dim]Esperé {ZONE_TTL} s (el TTL de la zona) para que el receptor no use "
+            "registros viejos de su caché.[/]"
+        )
     if not result.propagated:
         console.print("[yellow]⚠ El DNS todavía no sirve el serial nuevo. Revisa `lab estado`.[/]")
     console.print(f"Serial SOA publicado: {state['serial']}")
@@ -107,14 +142,14 @@ def cmd_enviar(args: argparse.Namespace) -> int:
         console.print("  El servidor del banco lo aceptó y lo entrega al MX (receptor).")
     else:
         console.print(f"  Emisor: [red]{result.code}[/] {result.reply}")
-    _show_delivery(result.message_id, result.accepted)
+    _show_delivery(result.message_id, result.accepted, result.envelope_from, result.header_from)
     return 0 if result.accepted else 1
 
 
 def _explain_smtp(result: dict[str, Any]) -> str:
     code = result["code"]
     if 200 <= code < 300:
-        return "[green]ACEPTADO[/]: el receptor no encontró motivo para desconfiar."
+        return "[green]ACEPTADO[/]: el receptor recibió el correo para entregarlo."
     if 500 <= code < 600:
         return "[red]RECHAZADO[/]: el receptor lo bloqueó en la conversación SMTP."
     if 400 <= code < 500:
@@ -149,7 +184,12 @@ def cmd_atacar(args: argparse.Namespace) -> int:
             console.print(f"  Firma DKIM: {attack['dkim']}")
             console.print(f"  Respuesta SMTP: {result['code']} {result['reply']}")
             console.print(f"  {_explain_smtp(result)}")
-            _show_delivery(result["message_id"], result["accepted"])
+            _show_delivery(
+                result["message_id"],
+                result["accepted"],
+                result["envelope_from"],
+                result["header_from"],
+            )
     except LabError as error:
         console.print(f"[red]✗ {error}[/]")
         return 2

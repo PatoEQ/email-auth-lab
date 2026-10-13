@@ -8,10 +8,13 @@ Resultado esperado:
   E+marca  entregado con marca de spam o cuarentena visible
   R        rechazado con un SMTP 5xx
 Los fragmentos (p. ej. "spf=none") deben aparecer en Authentication-Results.
+Un dominio entre paréntesis, p. ej. "spf=pass (atacante.test)", indica para qué dominio
+se obtuvo ese resultado: también se verifica en Authentication-Results.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 
@@ -24,11 +27,17 @@ from lab.envios import launch_attack, send_legit
 class Expected:
     outcome: str  # "E", "E+marca" o "R"
     auth: tuple[str, ...] = ()
+    domain: str | None = None  # dominio entre paréntesis, si la celda lo indica
 
 
 def cell(text: str) -> Expected:
-    outcome, *auth = text.split()
-    return Expected(outcome, tuple(a for a in auth if "=" in a))
+    domain = re.search(r"\(([^)]+)\)", text)
+    outcome, *auth = re.sub(r"\([^)]*\)", "", text).split()
+    return Expected(outcome, tuple(auth), domain.group(1) if domain else None)
+
+
+# Dónde aparece el dominio de cada método en Authentication-Results.
+DOMAIN_FIELD = {"spf": "smtp.mailfrom=", "dkim": "header.d=", "dmarc": "header.from="}
 
 
 COLUMNS = ("0", "1", "2", "3-none", "3-quarantine", "3-reject")
@@ -44,11 +53,9 @@ TRUTH_TABLE: dict[str, tuple[str, ...]] = {
 }
 # fmt: on
 
-# Celdas ya construidas (envío, escenario). Fase 2: escenario 0, legítimo y A1.
-IMPLEMENTED = [
-    ("legit", "0"),
-    ("A1", "0"),
-]
+# Celdas ya construidas (envío, escenario), agrupadas por escenario para cambiar poco.
+# Fase 2: columna 0 (legítimo, A1). Fase 3: columnas 0 y 1 (legítimo, A1, A2).
+IMPLEMENTED = [(sender, scenario) for scenario in ("0", "1") for sender in ("legit", "A1", "A2")]
 
 
 def expected(sender: str, scenario: str) -> Expected:
@@ -86,8 +93,18 @@ def test_tabla_de_verdad(sender: str, scenario: str) -> None:
     auth = mailpit.headers(message["ID"]).get("Authentication-Results", [""])[0]
     for fragment in want.auth:
         assert fragment in auth, f"{sender}/{scenario}: falta «{fragment}» en «{auth}»"
+    if want.domain:
+        method = want.auth[0].split("=")[0]
+        pattern = rf"{DOMAIN_FIELD[method]}\S*{re.escape(want.domain)}\b"
+        assert re.search(pattern, auth), f"{sender}/{scenario}: {method} no es de {want.domain}"
     # "E+marca" se verificará en la fase 5 (DMARC quarantine).
     assert want.outcome == "E", f"Resultado {want.outcome} aún no implementado en el test"
+
+
+def test_lectura_de_celdas() -> None:
+    assert cell("E spf=pass (atacante.test)") == Expected("E", ("spf=pass",), "atacante.test")
+    assert cell("E+marca") == Expected("E+marca")
+    assert cell("R") == Expected("R")
 
 
 def test_tabla_copiada_completa() -> None:

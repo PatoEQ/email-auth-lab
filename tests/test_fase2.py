@@ -35,7 +35,7 @@ def test_init_publica_dkim_del_atacante_completo() -> None:
 
 
 def test_escenario_0_no_publica_autenticacion() -> None:
-    escenarios.activate("0")
+    assert escenarios.activate("0").propagated
     for kind, name, values in escenarios.published_records():
         assert values == [], f"{kind} en {name} no debería existir en el escenario 0"
 

@@ -10,7 +10,7 @@ from typing import Any
 import renderizar_zonas as zonas  # compartido con `init` (ver toolbox/Dockerfile)
 
 from lab import dns
-from lab.config import DKIM_SELECTOR, ESTADO_DIR, VICTIM_DOMAIN, ZONAS_DIR
+from lab.config import DKIM_SELECTOR, ESTADO_DIR, VICTIM_DOMAIN, ZONAS_DIR, ZONE_TTL
 
 ESCENARIOS = zonas.ESCENARIOS
 
@@ -20,6 +20,12 @@ MEANING: dict[str, str] = {
         "bancoseguro.test no publica SPF, DKIM ni DMARC. El receptor no tiene cómo saber "
         "quién puede enviar en nombre del banco: cualquiera puede escribir "
         "«director@bancoseguro.test» y el correo llega."
+    ),
+    "1": (
+        "bancoseguro.test publica SPF: «solo 172.28.0.10 (el emisor) envía correo con "
+        "nuestro dominio en el sobre; el resto, rechazar (-all)». SPF revisa el sobre "
+        "(MAIL FROM), no el From: que ve el empleado: un atacante que pone su propio "
+        "dominio en el sobre pasa SPF sin problema."
     ),
 }
 
@@ -38,6 +44,7 @@ class Activation:
     added: list[str]
     removed: list[str]
     propagated: bool
+    waited_ttl: bool  # ¿esperamos a que caduquen las cachés DNS?
 
 
 def current_state() -> dict[str, Any]:
@@ -71,12 +78,19 @@ def activate(escenario_id: str, timeout: float = 15.0) -> Activation:
             break
         time.sleep(0.5)
 
+    # El receptor puede tener en caché los registros anteriores hasta que venza su TTL.
+    # Si la zona cambió, esperamos ese TTL para que el próximo correo vea los nuevos.
+    changed = before != after
+    if changed and propagated:
+        time.sleep(ZONE_TTL)
+
     return Activation(
         state=state,
         previous=str(previous) if previous is not None else None,
         added=sorted(after - before),
         removed=sorted(before - after),
         propagated=propagated,
+        waited_ttl=changed and propagated,
     )
 
 

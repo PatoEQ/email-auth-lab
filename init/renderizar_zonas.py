@@ -43,6 +43,12 @@ class Escenario:
 # Cada fase agrega sus escenarios aquí (ver CLAUDE.md, sección 4).
 ESCENARIOS: dict[str, Escenario] = {
     "0": Escenario("0", "Sin protección", (), firma_dkim=False),
+    "1": Escenario(
+        "1",
+        "SPF",
+        ('@         IN TXT  "v=spf1 ip4:172.28.0.10 -all"',),
+        firma_dkim=False,
+    ),
 }
 
 ESCENARIO_INICIAL = "0"

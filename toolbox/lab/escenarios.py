@@ -34,6 +34,21 @@ MEANING: dict[str, str] = {
         "modificó el correo por el camino. Pero DKIM tampoco compara el dominio que firma "
         "(d=) con el From: que ve el empleado."
     ),
+    "3-none": (
+        "El banco publica DMARC con p=none: «avísenme qué pasa, pero no bloqueen nada». "
+        "Ahora el receptor exige alineación: SPF o DKIM deben validar el mismo dominio "
+        "del From:. Los ataques salen dmarc=fail, pero se entregan. Es la etapa de "
+        "observación: los reportes (rua) muestran quién envía en nombre del banco."
+    ),
+    "3-quarantine": (
+        "Política p=quarantine: lo que falla DMARC se entrega marcado como sospechoso "
+        "(en el laboratorio, con «[CUARENTENA]» en el asunto). El correo legítimo, "
+        "alineado, sigue llegando limpio."
+    ),
+    "3-reject": (
+        "Política p=reject: lo que falla DMARC se rechaza en la conversación SMTP (5xx) "
+        "y nunca llega a la bandeja. A1–A4 quedan bloqueados; el correo legítimo pasa."
+    ),
 }
 
 # Registros de autenticación que mostramos al activar o consultar el estado.

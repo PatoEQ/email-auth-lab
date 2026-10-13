@@ -145,6 +145,7 @@ services:
     volumes:
       - ./tests:/lab/tests:ro
       - ./pyproject.toml:/lab/pyproject.toml:ro
+      - ./reportes:/lab/reportes:ro
       - zonas-render:/zonas
       - estado:/estado
     networks:

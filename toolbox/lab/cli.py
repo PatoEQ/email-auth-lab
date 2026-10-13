@@ -8,23 +8,28 @@ import sys
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from lab import escenarios, mailpit, servicios
+from lab import escenarios, mailpit, reportes, servicios
 from lab.config import ZONE_TTL
 from lab.envios import LabError, launch_attack, list_attacks, send_legit
 
 console = Console(highlight=False)
 
+QUARANTINE_TAG = "[CUARENTENA]"  # receptor/rspamd/actions.conf
 
-def _auth_results(message_id: str, receptor_queue_id: str | None) -> tuple[bool, str]:
-    """¿Llegó a Mailpit? y su Authentication-Results (si llegó)."""
+
+def _auth_results(
+    message_id: str, receptor_queue_id: str | None
+) -> tuple[dict[str, Any] | None, str]:
+    """El correo en Mailpit (si llegó) y su Authentication-Results."""
     message = mailpit.wait_for_message_id(message_id, receptor_queue_id, timeout=15)
     if not message:
-        return False, ""
+        return None, ""
     values = mailpit.headers(message["ID"]).get("Authentication-Results", [])
-    return True, values[0] if values else "(sin cabecera Authentication-Results)"
+    return message, values[0] if values else "(sin cabecera Authentication-Results)"
 
 
 def _verdicts(auth_results: str) -> str:
@@ -80,6 +85,26 @@ def _interpret_dkim(auth: str, visible: str) -> str:
     return f"DKIM no se pudo verificar ({result}) para {signer}."
 
 
+def _interpret_dmarc(auth: str, visible: str) -> str:
+    match = re.search(r"dmarc=(\w+)", auth)
+    if not match or match.group(1) == "none":
+        return f"{visible} no publica DMARC: no hay política que aplicar."
+    policy = re.search(r"policy=(\w+)", auth)
+    policy_name = policy.group(1) if policy else "?"
+    if match.group(1) == "pass":
+        return (
+            f"DMARC pasó: SPF o DKIM validan [bold]{visible}[/], el mismo dominio del "
+            "From: (alineación)."
+        )
+    reason = re.search(r'reason="([^"]+)"', auth)
+    why = f" ({reason.group(1)})" if reason else ""
+    consequence = {
+        "none": "La política es p=none (solo observar): se entregó igual.",
+        "quarantine": "La política es p=quarantine: se entregó [bold]marcado[/] como sospechoso.",
+    }.get(policy_name, f"Política p={policy_name}.")
+    return f"DMARC falló: ni SPF ni DKIM validan {visible} de forma alineada{why}. {consequence}"
+
+
 def _show_delivery(
     message_id: str,
     smtp_accepted: bool,
@@ -89,13 +114,24 @@ def _show_delivery(
 ) -> None:
     if not smtp_accepted:
         return
-    delivered, auth = _auth_results(message_id, receptor_queue_id)
-    if not delivered:
+    message, auth = _auth_results(message_id, receptor_queue_id)
+    if not message:
         console.print("  [yellow]Todavía no aparece en Mailpit.[/] Revisa en unos segundos.")
         return
-    console.print(f"  [green]Llegó a la bandeja del empleado[/] (Mailpit).  {_verdicts(auth)}")
+    if message["Subject"].startswith(QUARANTINE_TAG):
+        console.print(
+            f"  [yellow]Llegó MARCADO como sospechoso[/] (asunto «{escape(QUARANTINE_TAG)} …»).  "
+            f"{_verdicts(auth)}"
+        )
+    else:
+        console.print(f"  [green]Llegó a la bandeja del empleado[/] (Mailpit).  {_verdicts(auth)}")
     envelope, visible = _domain(envelope_from), _domain(header_from)
-    for meaning in (_interpret_spf(auth, envelope, visible), _interpret_dkim(auth, visible)):
+    meanings = (
+        _interpret_spf(auth, envelope, visible),
+        _interpret_dkim(auth, visible),
+        _interpret_dmarc(auth, visible),
+    )
+    for meaning in meanings:
         if meaning:
             console.print(f"  [bold]Qué significa:[/] {meaning}")
 
@@ -181,7 +217,10 @@ def _explain_smtp(result: dict[str, Any]) -> str:
     if 200 <= code < 300:
         return "[green]ACEPTADO[/]: el receptor recibió el correo para entregarlo."
     if 500 <= code < 600:
-        return "[red]RECHAZADO[/]: el receptor lo bloqueó en la conversación SMTP."
+        return (
+            "[red]RECHAZADO[/]: el receptor lo bloqueó en la conversación SMTP. "
+            "El correo nunca llegó a la bandeja del empleado."
+        )
     if 400 <= code < 500:
         return "[yellow]RECHAZO TEMPORAL[/]: el receptor pide reintentar más tarde."
     return "[yellow]Sin respuesta clara del receptor.[/]"
@@ -274,6 +313,72 @@ def cmd_reset(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reportes(args: argparse.Namespace) -> int:
+    files = reportes.available()
+    if args.archivo:
+        files = [f for f in files if args.archivo in f.name]
+    if not files:
+        console.print(f"[red]✗ No encontré reportes en {reportes.REPORTS_DIR}.[/]")
+        return 1
+
+    for path in files:
+        report = reportes.parse(path)
+        console.print(
+            Panel.fit(
+                f"[bold]Reporte DMARC agregado de {report.org_name}[/]\n"
+                f"Dominio: {report.domain} · política publicada: p={report.policy}\n"
+                f"Período: {report.begin:%Y-%m-%d %H:%M} a {report.end:%Y-%m-%d %H:%M} UTC · "
+                f"id {report.report_id}",
+                border_style="cyan",
+            )
+        )
+        table = Table()
+        table.add_column("#", justify="right")
+        table.add_column("IP de origen")
+        table.add_column("Correos", justify="right")
+        table.add_column("SPF")
+        table.add_column("DKIM")
+        table.add_column("Autenticó como")
+        table.add_column("Diagnóstico")
+        rows = sorted(report.rows, key=lambda r: -r.count)
+        colors = {"Legítimo": "green", "Reenvío": "green", "Servicio sin alinear": "yellow"}
+        for number, row in enumerate(rows, start=1):
+            category, _ = row.verdict()
+            passed = sorted({a.domain for a in row.auth if a.result == "pass"})
+            table.add_row(
+                str(number),
+                row.source_ip,
+                str(row.count),
+                _colored(row.spf_aligned),
+                _colored(row.dkim_aligned),
+                "\n".join(passed) or "[dim](nada)[/]",
+                f"[{colors.get(category, 'red')}]{category}[/]",
+            )
+        console.print(table)
+        console.print("[dim]SPF y DKIM: resultado alineado con el From: (lo que evalúa DMARC).[/]")
+        for number, row in enumerate(rows, start=1):
+            console.print(f"  [bold]{number}.[/] {row.verdict()[1]}")
+        console.print()
+
+        failing = report.total - report.passing
+        console.print(
+            f"[bold]Resumen:[/] {report.passing} de {report.total} correos pasan DMARC "
+            f"({100 * report.passing / report.total:.0f} %). "
+            f"Con p=reject se rechazarían {failing}."
+        )
+        unaligned = sum(r.count for r in report.rows if r.verdict()[0] == "Servicio sin alinear")
+        if unaligned:
+            console.print(
+                f"[yellow]Ojo:[/] {unaligned} de esos correos parecen legítimos (un servicio "
+                "sin alinear). Corrígelo antes de pasar a quarantine o reject."
+            )
+    return 0
+
+
+def _colored(result: str) -> str:
+    return f"[green]{result}[/]" if result == "pass" else f"[red]{result}[/]"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lab", description="Laboratorio de SPF, DKIM y DMARC (dominios .test, red aislada)."
@@ -293,6 +398,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--todos", action="store_true", help="lanza todos los ataques disponibles")
     p.add_argument("--para", help=argparse.SUPPRESS)  # solo para demostrar la validación
     p.set_defaults(func=cmd_atacar)
+
+    p = sub.add_parser("reportes", help="muestra los reportes DMARC agregados de ejemplo")
+    p.add_argument("archivo", nargs="?", help="parte del nombre del archivo (opcional)")
+    p.set_defaults(func=cmd_reportes)
 
     p = sub.add_parser("estado", help="escenario activo y salud de los servicios")
     p.set_defaults(func=cmd_estado)

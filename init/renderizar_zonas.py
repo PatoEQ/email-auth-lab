@@ -40,24 +40,39 @@ class Escenario:
     firma_dkim: bool  # ¿el emisor firma con DKIM?
 
 
+SPF_BANCO = '@         IN TXT  "v=spf1 ip4:172.28.0.10 -all"'
+DKIM_BANCO = "s2026._domainkey IN TXT {{DKIM_S2026}}"
+
+
+def dmarc_banco(politica: str) -> str:
+    valor = f"v=DMARC1; p={politica}; rua=mailto:dmarc-reportes@bancoseguro.test"
+    return f'_dmarc    IN TXT  "{valor}"'
+
+
 # Cada fase agrega sus escenarios aquí (ver CLAUDE.md, sección 4).
 ESCENARIOS: dict[str, Escenario] = {
     "0": Escenario("0", "Sin protección", (), firma_dkim=False),
     "1": Escenario(
         "1",
         "SPF",
-        ('@         IN TXT  "v=spf1 ip4:172.28.0.10 -all"',),
+        (SPF_BANCO,),
         firma_dkim=False,
     ),
     "2": Escenario(
         "2",
         "SPF + DKIM",
-        (
-            '@         IN TXT  "v=spf1 ip4:172.28.0.10 -all"',
-            "s2026._domainkey IN TXT {{DKIM_S2026}}",
-        ),
+        (SPF_BANCO, DKIM_BANCO),
         firma_dkim=True,
     ),
+    **{
+        f"3-{politica}": Escenario(
+            f"3-{politica}",
+            f"SPF + DKIM + DMARC p={politica}",
+            (SPF_BANCO, DKIM_BANCO, dmarc_banco(politica)),
+            firma_dkim=True,
+        )
+        for politica in ("none", "quarantine", "reject")
+    },
 }
 
 ESCENARIO_INICIAL = "0"

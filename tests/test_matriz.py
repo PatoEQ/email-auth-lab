@@ -55,12 +55,16 @@ TRUTH_TABLE: dict[str, tuple[str, ...]] = {
 
 # Celdas ya construidas (envío, escenario), agrupadas por escenario para cambiar poco.
 # Fase 2: columna 0 (legítimo, A1). Fase 3: + columna 1 y A2. Fase 4: + columna 2, A3 y A4.
+# Fase 5: + columnas 3-none, 3-quarantine y 3-reject.
 # El legítimo va primero en cada columna: A3 altera el último correo legítimo.
 IMPLEMENTED = [
     (sender, scenario)
-    for scenario in ("0", "1", "2")
+    for scenario in ("0", "1", "2", "3-none", "3-quarantine", "3-reject")
     for sender in ("legit", "A1", "A2", "A3", "A4")
 ]
+
+# Marca visible de cuarentena (receptor/rspamd/actions.conf).
+QUARANTINE_TAG = "[CUARENTENA]"
 
 
 def expected(sender: str, scenario: str) -> Expected:
@@ -103,8 +107,11 @@ def test_tabla_de_verdad(sender: str, scenario: str) -> None:
         method = want.auth[0].split("=")[0]
         pattern = rf"{DOMAIN_FIELD[method]}\S*{re.escape(want.domain)}\b"
         assert re.search(pattern, auth), f"{sender}/{scenario}: {method} no es de {want.domain}"
-    # "E+marca" se verificará en la fase 5 (DMARC quarantine).
-    assert want.outcome == "E", f"Resultado {want.outcome} aún no implementado en el test"
+    marked = message["Subject"].startswith(QUARANTINE_TAG)
+    if want.outcome == "E+marca":
+        assert marked, f"{sender}/{scenario}: se esperaba la marca de cuarentena en el asunto"
+    else:
+        assert not marked, f"{sender}/{scenario}: llegó marcado y la tabla dice entrega limpia"
 
 
 def test_lectura_de_celdas() -> None:

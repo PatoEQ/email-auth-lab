@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Reporte DMARC agregado (RUA) de EJEMPLO, 100 % ficticio.
+  - Dominios: solo .test (RFC 2606). IPs: solo 192.0.2.0/24 (TEST-NET-1, RFC 5737).
+  - Formato: RFC 7489, apéndice C. Nombre del archivo: receptor!dominio!inicio!fin.
+  Simula lo que un proveedor de correo envía cada día a rua=mailto:dmarc-reportes@bancoseguro.test
+  durante la etapa p=none: quién envió correo con From: bancoseguro.test y qué resultado obtuvo.
+-->
+<feedback>
+  <version>1.0</version>
+  <report_metadata>
+    <org_name>Correo Ejemplo S.A.</org_name>
+    <email>noreply-dmarc@receptor-ejemplo.test</email>
+    <report_id>2026-10-12.bancoseguro.test.000184</report_id>
+    <date_range>
+      <begin>1791763200</begin>
+      <end>1791849600</end>
+    </date_range>
+  </report_metadata>
+  <policy_published>
+    <domain>bancoseguro.test</domain>
+    <adkim>r</adkim>
+    <aspf>r</aspf>
+    <p>none</p>
+    <sp>none</sp>
+    <pct>100</pct>
+  </policy_published>
+
+  <!-- 1. El servidor de correo del banco: todo alineado. -->
+  <record>
+    <row>
+      <source_ip>192.0.2.10</source_ip>
+      <count>1250</count>
+      <policy_evaluated>
+        <disposition>none</disposition>
+        <dkim>pass</dkim>
+        <spf>pass</spf>
+      </policy_evaluated>
+    </row>
+    <identifiers>
+      <header_from>bancoseguro.test</header_from>
+      <envelope_from>bancoseguro.test</envelope_from>
+    </identifiers>
+    <auth_results>
+      <dkim>
+        <domain>bancoseguro.test</domain>
+        <selector>s2026</selector>
+        <result>pass</result>
+      </dkim>
+      <spf>
+        <domain>bancoseguro.test</domain>
+        <scope>mfrom</scope>
+        <result>pass</result>
+      </spf>
+    </auth_results>
+  </record>
+
+  <!-- 2. Una lista de correo que reenvía: SPF falla (otra IP), pero DKIM sobrevive. -->
+  <record>
+    <row>
+      <source_ip>192.0.2.25</source_ip>
+      <count>340</count>
+      <policy_evaluated>
+        <disposition>none</disposition>
+        <dkim>pass</dkim>
+        <spf>fail</spf>
+      </policy_evaluated>
+    </row>
+    <identifiers>
+      <header_from>bancoseguro.test</header_from>
+      <envelope_from>listas.asociacion-bancaria.test</envelope_from>
+    </identifiers>
+    <auth_results>
+      <dkim>
+        <domain>bancoseguro.test</domain>
+        <selector>s2026</selector>
+        <result>pass</result>
+      </dkim>
+      <spf>
+        <domain>listas.asociacion-bancaria.test</domain>
+        <scope>mfrom</scope>
+        <result>pass</result>
+      </spf>
+    </auth_results>
+  </record>
+
+  <!-- 3. Plataforma de boletines contratada por Marketing, sin configurar: falla DMARC.
+          Es correo legítimo: hay que arreglarlo ANTES de pasar a quarantine/reject. -->
+  <record>
+    <row>
+      <source_ip>192.0.2.140</source_ip>
+      <count>412</count>
+      <policy_evaluated>
+        <disposition>none</disposition>
+        <dkim>fail</dkim>
+        <spf>fail</spf>
+      </policy_evaluated>
+    </row>
+    <identifiers>
+      <header_from>bancoseguro.test</header_from>
+      <envelope_from>rebotes.envios-masivos.test</envelope_from>
+    </identifiers>
+    <auth_results>
+      <dkim>
+        <domain>envios-masivos.test</domain>
+        <selector>em1</selector>
+        <result>pass</result>
+      </dkim>
+      <spf>
+        <domain>rebotes.envios-masivos.test</domain>
+        <scope>mfrom</scope>
+        <result>pass</result>
+      </spf>
+    </auth_results>
+  </record>
+
+  <!-- 4. Suplantación: alguien envía como bancoseguro.test desde una IP desconocida. -->
+  <record>
+    <row>
+      <source_ip>192.0.2.77</source_ip>
+      <count>89</count>
+      <policy_evaluated>
+        <disposition>none</disposition>
+        <dkim>fail</dkim>
+        <spf>fail</spf>
+      </policy_evaluated>
+    </row>
+    <identifiers>
+      <header_from>bancoseguro.test</header_from>
+      <envelope_from>bancoseguro.test</envelope_from>
+    </identifiers>
+    <auth_results>
+      <spf>
+        <domain>bancoseguro.test</domain>
+        <scope>mfrom</scope>
+        <result>fail</result>
+      </spf>
+    </auth_results>
+  </record>
+</feedback>

@@ -1,6 +1,8 @@
 # Construir el laboratorio desde cero
 
-Esta guía explica cómo construir `email-auth-lab` desde una computadora recién formateada hasta el repositorio publicado en GitHub. Si solo quieres **usar** el laboratorio, no necesitas esta guía: ve al `README.md` y sigue "Inicio rápido".
+Esta guía explica cómo se construyó `email-auth-lab`, fase por fase con Claude Code, desde una computadora recién formateada hasta el repositorio publicado en GitHub. Es el *making-of* del laboratorio.
+
+> **¿Solo quieres usar el laboratorio?** No necesitas esta guía: sigue la [guía de uso](guia-de-uso.md), que explica cómo instalar los requisitos, descargar el repositorio y recorrer los escenarios tal como están.
 
 > **Cómo usar esta guía.** Cada fase dice qué se construye, por qué, qué archivos aparecen, el prompt para Claude Code y cómo comprobar que funciona. Si prefieres construirlo a mano, los prompts sirven como especificación. El código final del repositorio es la referencia definitiva; si algo aquí no coincide con él, manda el código.
 
@@ -43,63 +45,28 @@ Resultado final: `./lab.sh escenario 3-reject` + `./lab.sh atacar --todos` → A
 
 ## 1. Preparar la computadora
 
-### 1.1 Requisitos de hardware
+### 1.1 Requisitos básicos
 
-| Recurso | Mínimo | Recomendado |
-|---|---|---|
-| RAM | 8 GB | 16 GB |
-| Disco libre | 10 GB | 20 GB |
-| CPU | 64 bits con virtualización | 4 núcleos o más |
-| Internet | Para instalar y para la primera construcción | Después, el lab funciona sin conexión |
+Los requisitos de hardware y la instalación de **Docker, WSL2 (en Windows) y Git** son los mismos que para usar el laboratorio. Están en la [guía de uso, secciones 1 y 2](guia-de-uso.md#2-instalar-los-requisitos). Síguela hasta la "Comprobación final" y vuelve aquí.
 
-### 1.2 Windows 10/11 (camino recomendado: todo dentro de WSL)
+### 1.2 Herramientas adicionales para construir
 
-1. **Actualiza Windows** por completo y reinicia.
-2. **Comprueba la virtualización.** Abre el Administrador de tareas, ve a Rendimiento, luego CPU, y busca "Virtualización: Habilitado". Si dice deshabilitado, entra a la BIOS y activa Intel VT-x o AMD-V/SVM.
-3. **Instala WSL2 con Ubuntu.** En PowerShell **como administrador**:
-   ```powershell
-   wsl --install
-   ```
-   Reinicia. Al abrir Ubuntu por primera vez, crea tu usuario y contraseña de Linux.
-4. **Instala Docker Desktop** desde https://www.docker.com/products/docker-desktop/ con la opción **WSL 2** marcada. Ábrelo y ve a *Settings → Resources → WSL Integration*. Activa tu distribución Ubuntu.
-5. **Comprueba Docker desde Ubuntu:**
-   ```bash
-   docker run --rm hello-world
-   docker compose version
-   ```
-   ✅ Debes ver "Hello from Docker!" y una versión de Compose v2.
-6. **Instala las herramientas en Ubuntu:**
-   ```bash
-   sudo apt update && sudo apt install -y git dnsutils make curl
-   ```
-7. **Configura Git** (con tu correo *noreply* de GitHub: *Settings → Emails → Keep my email addresses private*):
+Para construir el laboratorio con Claude Code y publicarlo, además necesitas:
+
+1. **Identidad de Git**, con tu correo *noreply* de GitHub (*Settings → Emails → Keep my email addresses private*), para no publicar tu correo personal en el historial:
    ```bash
    git config --global user.name "TU_USUARIO"
    git config --global user.email "NUMERO+TU_USUARIO@users.noreply.github.com"
-   git config --global core.autocrlf input
    git config --global init.defaultBranch main
    ```
-   `core.autocrlf input` evita que se cuelen finales de línea de Windows, que rompen los scripts dentro de los contenedores.
-8. **Instala VS Code** en Windows con las extensiones *WSL*, *Docker* y *Python*. Abrirás el proyecto con *Connect to WSL*.
-9. **Instala GitHub CLI** en Ubuntu siguiendo https://cli.github.com y autentícate:
+2. **VS Code** con las extensiones *WSL*, *Docker* y *Python*. En Windows, abre el proyecto con *Connect to WSL*.
+3. **GitHub CLI**, siguiendo https://cli.github.com, y autentícate:
    ```bash
    gh auth login   # GitHub.com → HTTPS → Login with a web browser
    ```
-10. **Instala Claude Code** dentro de Ubuntu siguiendo la guía oficial: https://docs.claude.com/en/docs/claude-code/overview. Inicia sesión con tu cuenta.
+4. **Claude Code**, siguiendo la guía oficial (https://docs.claude.com/en/docs/claude-code/overview). En Windows, instálalo dentro de Ubuntu e inicia sesión con tu cuenta.
 
-### 1.3 macOS
-
-1. Instala Docker Desktop (Apple Silicon o Intel según tu equipo).
-2. Instala las herramientas: `xcode-select --install` para Git, y [Homebrew](https://brew.sh) para `brew install gh`.
-3. Configura Git como en el paso 7 de Windows (sin `core.autocrlf`).
-4. Instala VS Code y Claude Code.
-
-### 1.4 Linux (Ubuntu/Debian)
-
-1. Instala Docker Engine y el plugin Compose desde https://docs.docker.com/engine/install/. Agrega tu usuario al grupo `docker` y vuelve a iniciar sesión.
-2. `sudo apt install -y git dnsutils make`, más `gh`, VS Code y Claude Code.
-
-### 1.5 Comprobación final del entorno
+### 1.3 Comprobación final del entorno
 
 ```bash
 docker --version && docker compose version && git --version && gh --version

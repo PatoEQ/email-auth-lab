@@ -15,7 +15,9 @@ Laboratorio local y aislado para entender **SPF, DKIM y DMARC**: qué son, cómo
 
 ## Inicio rápido
 
-Requisitos: Docker con Compose v2 (Docker Desktop en Windows/macOS, Docker Engine en Linux), 8 GB de RAM y unos 3 GB libres en disco. En Windows, usa **WSL2** y clona el repo dentro de Ubuntu ([guía detallada](docs/construir-desde-cero.md#1-preparar-la-computadora)).
+Requisitos: Docker con Compose v2 (Docker Desktop en Windows/macOS, Docker Engine en Linux), Git, 8 GB de RAM y unos 3 GB libres en disco. En Windows, usa **WSL2** y clona el repo dentro de Ubuntu.
+
+> **¿Es tu primera vez?** La [guía de uso](docs/guia-de-uso.md) explica paso a paso cómo instalar los requisitos en Windows, macOS o Linux, descargar el laboratorio (con Git o en ZIP), arrancarlo y recorrer los escenarios.
 
 ```bash
 git clone https://github.com/PatoEQ/email-auth-lab.git && cd email-auth-lab
@@ -136,12 +138,16 @@ La suite (unos 9 minutos, sobre todo por las esperas de TTL al cambiar de escena
 
 | Documento | Para qué |
 |---|---|
+| [docs/guia-de-uso.md](docs/guia-de-uso.md) | Instalar los requisitos, descargar el laboratorio y usarlo |
 | [docs/teoria.md](docs/teoria.md) | SPF, DKIM y DMARC explicados con diagramas |
 | [docs/implementacion-produccion.md](docs/implementacion-produccion.md) | Cómo llevar esto a un dominio real, paso a paso |
 | [docs/guion-presentacion.md](docs/guion-presentacion.md) | Guion de una charla de 45–60 minutos con el laboratorio |
-| [docs/construir-desde-cero.md](docs/construir-desde-cero.md) | Construir el laboratorio fase por fase con Claude Code |
 | [docs/solucion-de-problemas.md](docs/solucion-de-problemas.md) | Problemas conocidos y sus soluciones |
 | [docs/glosario.md](docs/glosario.md) | Términos de correo y autenticación |
+
+## Cómo se construyó
+
+El laboratorio se construyó en 7 fases con ayuda de [Claude Code](https://claude.com/claude-code), con [CLAUDE.md](CLAUDE.md) como contrato. [docs/construir-desde-cero.md](docs/construir-desde-cero.md) es el *making-of*: los prompts de cada fase, qué se construyó, los problemas que aparecieron y cómo verificar cada paso. Solo te hace falta si quieres reproducir el proceso; para usar el laboratorio basta con la [guía de uso](docs/guia-de-uso.md).
 
 ## Contribuir y seguridad
 
@@ -149,4 +155,4 @@ Las contribuciones son bienvenidas: lee [CONTRIBUTING.md](CONTRIBUTING.md). Para
 
 ## Licencia y créditos
 
-[MIT](LICENSE). Construido con [Postfix](https://www.postfix.org/), [Rspamd](https://rspamd.com/), [OpenDKIM](http://www.opendkim.org/), [CoreDNS](https://coredns.io/), [Mailpit](https://mailpit.axllent.org/), [swaks](https://jetmore.org/john/code/swaks/), [dkimpy](https://launchpad.net/dkimpy) y [rich](https://github.com/Textualize/rich). Desarrollado con ayuda de [Claude Code](https://claude.com/claude-code), siguiendo el proceso de [docs/construir-desde-cero.md](docs/construir-desde-cero.md).
+[MIT](LICENSE). Construido con [Postfix](https://www.postfix.org/), [Rspamd](https://rspamd.com/), [OpenDKIM](http://www.opendkim.org/), [CoreDNS](https://coredns.io/), [Mailpit](https://mailpit.axllent.org/), [swaks](https://jetmore.org/john/code/swaks/), [dkimpy](https://launchpad.net/dkimpy) y [rich](https://github.com/Textualize/rich). Desarrollado con ayuda de [Claude Code](https://claude.com/claude-code) (ver [Cómo se construyó](#cómo-se-construyó)).

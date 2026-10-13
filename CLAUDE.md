@@ -131,7 +131,7 @@ email-auth-lab/
 ├── emisor/  receptor/  atacante/  toolbox/  reenviador/
 ├── escenarios/00-sin-proteccion … 05-extras/README.md
 ├── docs/teoria.md  implementacion-produccion.md  guion-presentacion.md
-│   construir-desde-cero.md  solucion-de-problemas.md  glosario.md  img/
+│   guia-de-uso.md  construir-desde-cero.md  solucion-de-problemas.md  glosario.md  img/
 ├── reportes/ejemplos/    # XML DMARC 100 % ficticios (IPs 192.0.2.0/24, dominios .test)
 ├── tests/
 └── .github/workflows/ci.yml
